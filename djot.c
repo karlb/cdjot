@@ -1151,7 +1151,32 @@ dosurround(const char *b, const char *e, int n)
 	 * (explicit openers bypass this rule) */
 	if (!explicit_open && isws(after)) return 0;
 
-	/* find matching close */
+	/* handle runs: N identical delimiters matched by N closers */
+	if (!explicit_open) {
+		int run = leadc(b, e, ch);
+		if (run > 1) {
+			const char *rp = b + run;
+			while (rp + run <= e) {
+				if (*rp != ch) { rp++; continue; }
+				int crun = leadc(rp, e, ch);
+				if (crun >= run) {
+					char bb = (rp > b + run) ? rp[-1] : 0;
+					if (!isws(bb) && rp > b + run) {
+						int j;
+						for (j = 0; j < run; j++)
+							fputs(ch == '_' ? "<em>" : "<strong>", stdout);
+						process(b + run, rp, 0);
+						for (j = 0; j < run; j++)
+							fputs(ch == '_' ? "</em>" : "</strong>", stdout);
+						return rp + run - b;
+					}
+				}
+				rp += crun;
+			}
+		}
+	}
+
+	/* find matching close (single delimiter) */
 	start = b + 1 + consumed_open;
 	for (p = start; p < e; p++) {
 		if (*p == '\\' && p + 1 < e) { p++; continue; }
