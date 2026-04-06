@@ -1690,10 +1690,13 @@ doparagraph(const char *b, const char *e, int n)
 			if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
 				int preceded_by_word = (s > b && s[-1] != ' ' && s[-1] != '\n'
 				    && s[-1] != '\t');
-				/* check if this looks like {attrs} (not {_ {* etc.) */
-				if (s + 1 < p && (s[1] == '#' || s[1] == '.'
-				    || s[1] == '%' || isalpha((unsigned char)s[1]))) {
-					/* find matching } */
+				/* skip known {X openers (emphasis, quotes) */
+				if (s + 1 < p && (s[1] == '_' || s[1] == '*' || s[1] == '~'
+				    || s[1] == '^' || s[1] == '+' || s[1] == '-' || s[1] == '='
+				    || s[1] == '\'' || s[1] == '"'))
+					goto copy_char;
+				/* find matching } (handles quotes and escapes) */
+				{
 					const char *q = s + 1;
 					while (q < p && *q != '}') {
 						if (*q == '\\' && q + 1 < p) q += 2;
@@ -1709,17 +1712,35 @@ doparagraph(const char *b, const char *e, int n)
 					if (q < p && *q == '}') {
 						/* validate attrs */
 						char tid[128], tcls[128], textra[256];
-						if (parse_attrs(s + 1, q, tid, sizeof(tid),
+						int valid = parse_attrs(s + 1, q, tid, sizeof(tid),
 						    tcls, sizeof(tcls), textra, sizeof(textra))
-						    || (q == s + 1)) {
+						    || (q == s + 1); /* empty {} */
+						if (valid) {
+							if (q == s + 1) {
+								/* {} — consume silently */
+								s = q + 1;
+								transformed = 1;
+								continue;
+							}
 							if (preceded_by_word) {
-								/* found valid inline attrs — find word start */
+								/* find word start — stop at space, tags, quotes,
+								 * and emphasis delimiters if they have a matching closer */
+								int stop_at_emph = 0;
+								{
+									const char *r = q + 1;
+									while (r < p && (*r == ' ' || *r == '\t')) r++;
+									if (r < p && (*r == '*' || *r == '_'))
+										stop_at_emph = 1;
+								}
 								int wstart = nlen;
-								/* walk back past non-space content */
-								while (wstart > 0 && nbuf[wstart-1] != ' '
+								while (wstart > 0
+								    && nbuf[wstart-1] != ' '
 								    && nbuf[wstart-1] != '\n'
 								    && nbuf[wstart-1] != '\t'
-								    && nbuf[wstart-1] != '>')
+								    && nbuf[wstart-1] != '>'
+								    && nbuf[wstart-1] != '"'
+								    && !(stop_at_emph && (nbuf[wstart-1] == '*'
+								        || nbuf[wstart-1] == '_')))
 									wstart--;
 								/* insert [ before word */
 								if (nlen + 2 > ncap) {
@@ -1732,8 +1753,27 @@ doparagraph(const char *b, const char *e, int n)
 								/* add ] before {attrs} */
 								if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
 								nbuf[nlen++] = ']';
-								/* copy {attrs} verbatim */
+								/* copy {attrs}, escaping unescaped * and _ in quoted values */
 								while (s <= q) {
+									if (*s == '"' && s > b && s < q) {
+										if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+										nbuf[nlen++] = *s++;
+										while (s < q && *s != '"') {
+											if (*s == '\\' && s + 1 < q) {
+												/* already escaped — copy as-is */
+												if (nlen + 1 >= ncap) { ncap = (ncap + 2) * 2; nbuf = realloc(nbuf, ncap); }
+												nbuf[nlen++] = *s++;
+												nbuf[nlen++] = *s++;
+												continue;
+											}
+											if (*s == '*' || *s == '_') {
+												if (nlen + 1 >= ncap) { ncap = (ncap + 2) * 2; nbuf = realloc(nbuf, ncap); }
+												nbuf[nlen++] = '\\';
+											}
+											if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+											nbuf[nlen++] = *s++;
+										}
+									}
 									if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
 									nbuf[nlen++] = *s++;
 								}
@@ -1744,15 +1784,18 @@ doparagraph(const char *b, const char *e, int n)
 							transformed = 1;
 							continue;
 						}
+						/* not valid attrs — copy {..} literally to prevent
+						 * smart replacement of contents (e.g. -- in {1--}) */
+						while (s <= q) {
+							if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+							nbuf[nlen++] = *s++;
+						}
+						transformed = 1;
+						continue;
 					}
 				}
-				/* also handle {} — consume silently */
-				if (s + 1 < p && s[1] == '}') {
-					s += 2;
-					transformed = 1;
-					continue;
-				}
 			}
+		copy_char:
 			if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
 			nbuf[nlen++] = *s++;
 		}
@@ -2338,6 +2381,22 @@ doreplace(const char *b, const char *e, int n)
 	int can_open, can_close;
 	if (n) return 0;
 
+	/* {X...} where X is not a known opener: output literally to prevent
+	 * smart replacement of contents (e.g. {1--} should not become {1–}) */
+	if (*b == '{' && b + 1 < e
+	    && b[1] != '_' && b[1] != '*' && b[1] != '~' && b[1] != '^'
+	    && b[1] != '+' && b[1] != '-' && b[1] != '='
+	    && b[1] != '\'' && b[1] != '"'
+	    && b[1] != '#' && b[1] != '.' && b[1] != '%'
+	    && !isalpha((unsigned char)b[1])) {
+		const char *q = b + 1;
+		while (q < e && *q != '}' && *q != '\n') q++;
+		if (q < e && *q == '}') {
+			hprint(b, q + 1);
+			return q + 1 - b;
+		}
+	}
+
 	if (*b == '-' && b + 1 < e && b[1] == '-') {
 		run = leadc(b, e, '-');
 		em = 0; en = 0;
@@ -2381,6 +2440,11 @@ doreplace(const char *b, const char *e, int n)
 		can_open = !isws(after) && (isws(before) || isasciipunct(before) || before == 0);
 		can_close = !isws(before) && (isws(after) || isasciipunct(after) || after == 0);
 		if (*b == '"') {
+			/* " after = is always opening (attribute value context) */
+			if (before == '=') {
+				fputs("\xe2\x80\x9c", stdout);
+				return 1;
+			}
 			fputs(can_open && !can_close ? "\xe2\x80\x9c" : "\xe2\x80\x9d", stdout);
 		} else if (can_close && !can_open) {
 			fputs("\xe2\x80\x99", stdout);
