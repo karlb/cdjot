@@ -972,6 +972,28 @@ dolist(const char *b, const char *e, int n)
 			int save_cont = in_container;
 			in_container = 1;
 			fputs("<li>\n", stdout);
+			/* check if item has blank between text blocks → loose */
+			if (!loose) {
+				const char *sp2;
+				for (sp2 = buf; sp2 < buf + i; ) {
+					const char *le = eol(sp2, buf + i);
+					if (isblankline(sp2, le)) {
+						/* found blank — check what follows */
+						const char *after = le;
+						while (after < buf + i && isblankline(after, eol(after, buf + i)))
+							after = eol(after, buf + i);
+						if (after < buf + i) {
+							int st2;
+							char d2, m2;
+							const char *np = after + spaces(after, buf + i);
+							if (!scan_marker(np, buf + i, &st2, &(int){0}, &d2, &m2))
+								loose = 1; /* text after blank = loose */
+						}
+						break;
+					}
+					sp2 = le;
+				}
+			}
 			if (!loose) tight = 1;
 			/* find first blank line to split inline vs block content */
 			{
