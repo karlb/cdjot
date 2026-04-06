@@ -13,7 +13,6 @@
 
 typedef int (*Parser)(const char *, const char *, int);
 
-/* forward declarations */
 static int doattr(const char *b, const char *e, int n);
 static int dorefdef(const char *b, const char *e, int n);
 static int doheading(const char *b, const char *e, int n);
@@ -37,15 +36,13 @@ static Parser parsers[] = {
 	dolinebreak, docode, dosurround, dolink, doautolink, doreplace,
 };
 
-/* reference link definitions */
 static struct {
 	const char *label; int labellen;
 	const char *url; int urllen;
-	char attrs[128]; /* extra attributes like title=foo */
+	char attrs[128];
 } refs[128];
 static int nrefs;
 
-/* footnote definitions */
 static struct {
 	const char *label; int labellen;
 	const char *content; int contentlen;
@@ -53,17 +50,14 @@ static struct {
 } footnotes[64];
 static int nfootnotes;
 
-/* heading section stack */
 static int sections[6], nsections;
-static int in_container; /* suppress sections inside blockquotes/lists */
-static int tight; /* suppress <p> wrapping in tight list items */
+static int in_container;
+static int tight;
 
-/* pending block attributes */
 static char pending_id[128];
 static char pending_class[128];
-static char pending_attrs[256]; /* raw key=val pairs */
+static char pending_attrs[256];
 
-/* used heading IDs for dedup */
 static char *used_ids[256];
 static int nused_ids;
 
@@ -85,7 +79,6 @@ hprint(const char *b, const char *e)
 	}
 }
 
-/* find end of current line, returns pointer past \n (or at end) */
 static const char *
 eol(const char *p, const char *e)
 {
@@ -102,7 +95,6 @@ isblankline(const char *p, const char *e)
 	return 1;
 }
 
-/* count leading ch characters */
 static int
 leadc(const char *p, const char *e, char ch)
 {
@@ -130,9 +122,21 @@ isws(int c)
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0;
 }
 
-/* look up a reference definition */
-/* normalize whitespace for comparison: collapse ws to single space */
-/* skip emphasis markers and normalize whitespace for label comparison */
+static const char *
+trim_end(const char *b, const char *e)
+{
+	while (e > b && isws(e[-1])) e--;
+	return e;
+}
+
+static const char *
+skip_blanks(const char *p, const char *e)
+{
+	while (p < e && isblankline(p, eol(p, e)))
+		p = eol(p, e);
+	return p;
+}
+
 static int
 label_match(const char *a, int alen, const char *b, int blen)
 {
@@ -178,9 +182,6 @@ close_sections(int level)
 	}
 }
 
-/* --- attribute parsing --- */
-
-/* parse attributes from {#id .class key=val ...}, write to buffers */
 static int
 parse_attrs(const char *b, const char *e, char *id, int idsz,
     char *cls, int clssz, char *extra, int exsz)
@@ -238,7 +239,6 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 	return idn > 0 || cn > 0 || en > 0;
 }
 
-/* emit stored attributes as HTML attributes */
 static void
 emit_attrs(const char *id, const char *cls, const char *extra)
 {
@@ -247,7 +247,36 @@ emit_attrs(const char *id, const char *cls, const char *extra)
 	if (extra && extra[0]) printf(" %s", extra);
 }
 
-/* deduplicate an ID: append -1, -2, etc. if already used */
+static void
+emit_code_open(const char *info, const char *infoend)
+{
+	if (info < infoend) {
+		fputs("<pre><code class=\"language-", stdout);
+		hprint(info, infoend);
+		fputs("\">", stdout);
+	} else {
+		fputs("<pre><code>", stdout);
+	}
+}
+
+/* check previous line for {attrs} block */
+static void
+prev_line_attrs(const char *line, const char *start,
+    char *id, int idsz, char *cls, int clssz, char *extra, int exsz)
+{
+	const char *prev, *pp, *pe;
+	if (line <= start) return;
+	prev = line - 1;
+	while (prev > start && prev[-1] != '\n') prev--;
+	pp = prev;
+	while (pp < line && (*pp == ' ' || *pp == '\t')) pp++;
+	if (pp >= line || *pp != '{') return;
+	pe = pp + 1;
+	while (pe < line && *pe != '}') pe++;
+	if (pe < line && *pe == '}')
+		parse_attrs(pp + 1, pe, id, idsz, cls, clssz, extra, exsz);
+}
+
 static void
 dedup_id(char *id, int sz)
 {
@@ -290,7 +319,6 @@ has_pending(void)
 	return pending_id[0] || pending_class[0] || pending_attrs[0];
 }
 
-/* block-level attribute line: {#id .class ...} */
 static int
 doattr(const char *b, const char *e, int n)
 {
@@ -304,7 +332,6 @@ doattr(const char *b, const char *e, int n)
 	q = p + 1;
 	while (q < e && *q != '}' && *q != '\n') q++;
 	if (q >= e || *q != '}') return 0;
-	/* rest of line must be blank */
 	{
 		const char *r = q + 1;
 		while (r < e && (*r == ' ' || *r == '\t')) r++;
@@ -315,8 +342,6 @@ doattr(const char *b, const char *e, int n)
 	    pending_attrs, sizeof(pending_attrs));
 	return -(eol(b, e) - b);
 }
-
-/* --- block parsers --- */
 
 static int
 dorefdef(const char *b, const char *e, int n)
@@ -332,8 +357,7 @@ dorefdef(const char *b, const char *e, int n)
 	if (p >= e || *p != ']') return 0;
 	p++;
 	if (p >= e || *p != ':') return 0;
-	clear_pending(); /* attributes before refdef apply to the ref, not next block */
-	/* consume this line and any indented continuation lines */
+	clear_pending();
 	line = eol(b, e);
 	while (line < e) {
 		int sp = spaces(line, e);
@@ -362,18 +386,11 @@ doheading(const char *b, const char *e, int n)
 	p += level;
 	if (p < e && *p != ' ' && *p != '\n') return 0;
 	if (p < e && *p == ' ') p++;
-	/* find end of first line content */
 	content = p;
-	q = eol(p, e);
-	while (q > content && (q[-1] == '\n' || q[-1] == '\r'
-	    || q[-1] == ' ' || q[-1] == '\t'))
-		q--;
-	cend = q;
+	cend = trim_end(content, eol(p, e));
 
-	/* collect continuation lines into buf */
 	buf = NULL;
 	blen = 0;
-	/* first line */
 	while (content < cend && (*content == ' ' || *content == '\t'
 	    || *content == '\n' || *content == '\r'))
 		content++;
@@ -381,7 +398,6 @@ doheading(const char *b, const char *e, int n)
 		ADDC(buf, blen) = *q;
 		blen++;
 	}
-	/* continuation: lines until blank or different heading level */
 	line = eol(b, e);
 	while (line < e && !isblankline(line, eol(line, e))) {
 		const char *lp = line;
@@ -402,23 +418,17 @@ doheading(const char *b, const char *e, int n)
 		} else {
 			lp = line;
 		}
-		q = eol(line, e);
-		while (q > lp && (q[-1] == '\n' || q[-1] == '\r'
-		    || q[-1] == ' ' || q[-1] == '\t'))
-			q--;
+		q = trim_end(lp, eol(line, e));
 		for (; lp < q; lp++) {
 			ADDC(buf, blen) = *lp;
 			blen++;
 		}
 		line = eol(line, e);
 	}
-	/* trim trailing whitespace from heading content */
-	while (blen > 0 && (buf[blen-1] == '\n' || buf[blen-1] == '\r'
-	    || buf[blen-1] == ' ' || buf[blen-1] == '\t'))
+	while (blen > 0 && isws(buf[blen-1]))
 		blen--;
 	ADDC(buf, blen) = '\0';
 
-	/* compute heading id */
 	{
 		char hid[256];
 		if (pending_id[0]) {
@@ -489,7 +499,6 @@ doblockquote(const char *b, const char *e, int n)
 	p++;
 	if (p < e && *p != ' ' && *p != '\n') return 0;
 
-	/* collect lines: continuation while '> ' prefix or lazy */
 	buf = NULL;
 	i = 0;
 	line = b;
@@ -550,21 +559,16 @@ docodefence(const char *b, const char *e, int n)
 	flen = leadc(p, e, fch);
 	if (flen < 3) return 0;
 	p += flen;
-	/* info string */
 	while (p < e && (*p == ' ' || *p == '\t')) p++;
 	info = p;
 	while (p < e && *p != '\n') p++;
-	infoend = p;
-	while (infoend > info && (infoend[-1] == ' ' || infoend[-1] == '\t'))
-		infoend--;
-	/* backtick fence: info must not contain backticks or spaces */
+	infoend = trim_end(info, p);
 	if (fch == '`') {
 		for (q = info; q < infoend; q++)
 			if (*q == '`' || *q == ' ') return 0;
 	}
 	if (p < e) p++; /* skip \n */
 
-	/* find closing fence */
 	line = p;
 	while (line < e) {
 		q = line;
@@ -572,14 +576,7 @@ docodefence(const char *b, const char *e, int n)
 		q += s;
 		int cl = leadc(q, e, fch);
 		if (cl >= flen && isblankline(q + cl, eol(line, e))) {
-			/* found closing fence */
-			if (info < infoend) {
-				fputs("<pre><code class=\"language-", stdout);
-				hprint(info, infoend);
-				fputs("\">", stdout);
-			} else {
-				fputs("<pre><code>", stdout);
-			}
+			emit_code_open(info, infoend);
 			/* print content, stripping indent */
 			for (q = p; q < line; ) {
 				const char *le = eol(q, line);
@@ -594,13 +591,7 @@ docodefence(const char *b, const char *e, int n)
 		line = eol(line, e);
 	}
 	/* unclosed: treat rest as code */
-	if (info < infoend) {
-		fputs("<pre><code class=\"language-", stdout);
-		hprint(info, infoend);
-		fputs("\">", stdout);
-	} else {
-		fputs("<pre><code>", stdout);
-	}
+	emit_code_open(info, infoend);
 	for (q = p; q < e; ) {
 		const char *le = eol(q, e);
 		int strip = spaces(q, le);
@@ -634,7 +625,6 @@ dothematicbreak(const char *b, const char *e, int n)
 	return -(eol(b, e) - b);
 }
 
-/* roman numeral value, -1 if not valid */
 static int
 roman_val(const char *b, const char *e, int upper)
 {
@@ -674,13 +664,8 @@ roman_val(const char *b, const char *e, int upper)
 	return val > 0 ? val : -1;
 }
 
-/*
- * Parse list marker at p. Returns offset past marker+space, or 0.
- * Sets *style: 0=bullet, 1=decimal, 2=lower-alpha, 3=upper-alpha,
- *              4=lower-roman, 5=upper-roman
- * Sets *start to the start number, *delim to the delimiter char.
- * Sets *mch to the bullet character (for bullet lists).
- */
+/* Returns offset past marker+space, or 0.
+ * style: 0=bullet 1=decimal 2=lower-alpha 3=upper-alpha 4=lower-roman 5=upper-roman */
 static int
 scan_marker(const char *p, const char *e, int *style, int *start,
     char *delim, char *mch)
@@ -811,10 +796,7 @@ dolist(const char *b, const char *e, int n)
 		const char *line2;
 		int rval = roman_val(p, p + 1, style == 3);
 		if (rval > 0) {
-			/* look at second item */
-			line2 = eol(b, e);
-			while (line2 < e && isblankline(line2, eol(line2, e)))
-				line2 = eol(line2, e);
+			line2 = skip_blanks(eol(b, e), e);
 			if (line2 < e) {
 				int st2, sn2;
 				char d2, m2;
@@ -837,7 +819,6 @@ dolist(const char *b, const char *e, int n)
 		}
 	}
 
-	/* open list */
 	if (style == 0) {
 		fputs("<ul>\n", stdout);
 	} else {
@@ -847,7 +828,6 @@ dolist(const char *b, const char *e, int n)
 		fputs(">\n", stdout);
 	}
 
-	/* parse items */
 	loose = 0;
 	had_blank = 0;
 	line = b;
@@ -881,16 +861,13 @@ dolist(const char *b, const char *e, int n)
 		}
 		indent = item_sp + item_mw; /* content column */
 
-		/* collect one item's content */
 		buf = NULL;
 		i = 0;
-		/* first line: content after marker */
 		p = line + indent;
 		q = eol(line, e);
 		for (; p < q; p++) { ADDC(buf, i) = *p; i++; }
 		line = q;
 
-		/* continuation lines */
 		while (line < e) {
 			if (isblankline(line, eol(line, e))) {
 				had_blank = 1;
@@ -901,12 +878,9 @@ dolist(const char *b, const char *e, int n)
 			}
 			sp = spaces(line, e);
 			if (sp > marker_col) {
-				/* indented past marker column: part of this item */
 				int strip;
 				if (sp >= indent && !had_blank)
-					strip = indent; /* content column */
-				else if (sp >= indent && had_blank)
-					strip = marker_col + 1; /* post-blank: preserve nesting */
+					strip = indent;
 				else
 					strip = marker_col + 1;
 				q = eol(line, e);
@@ -919,27 +893,21 @@ dolist(const char *b, const char *e, int n)
 			}
 			/* at or before marker column */
 			if (sp == marker_col) {
-				/* could be sibling item or end of list */
 				int st2;
 				char d2, m2;
 				if (scan_marker(line + sp, e, &st2, &(int){0}, &d2, &m2)) {
+					/* sibling marker → new item */
 					if (style == 0 && st2 == 0 && m2 == mch) break;
 					if (style != 0 && d2 == delim &&
 					    (st2 == style ||
 					    (style >= 4 && st2 == style - 2) ||
 					    (style <= 3 && st2 == style + 2)))
 						break;
+					/* any other marker without preceding blank → end */
+					if (!had_blank) break;
 				}
 			}
-			/* lazy continuation (no blank, not a list marker at base) */
 			if (!had_blank) {
-				/* check for any list marker at sp==marker_col */
-				if (sp == marker_col) {
-					int st2;
-					char d2, m2;
-					if (scan_marker(line + sp, e, &st2, &(int){0}, &d2, &m2))
-						break;
-				}
 				q = eol(line, e);
 				{
 					int strip = sp;
@@ -980,7 +948,7 @@ dolist(const char *b, const char *e, int n)
 			break;
 		}
 
-		/* check if loose: blank line between items (not after sub-list) */
+		/* blank between items (not after sub-list) → loose */
 		{
 			int saw_blank = (i >= 2 && buf[i-1] == '\n' && buf[i-2] == '\n');
 			if (saw_blank) {
@@ -997,9 +965,7 @@ dolist(const char *b, const char *e, int n)
 				}
 			}
 			if (saw_blank || (line < e && isblankline(line, eol(line, e)))) {
-				const char *lp = line;
-				while (lp < e && isblankline(lp, eol(lp, e)))
-					lp = eol(lp, e);
+				const char *lp = skip_blanks(line, e);
 				if (lp < e) {
 					int st2;
 					char d2, m2;
@@ -1012,7 +978,6 @@ dolist(const char *b, const char *e, int n)
 			}
 		}
 
-		/* trim trailing blank lines from item */
 		while (i > 0 && buf[i-1] == '\n') i--;
 		ADDC(buf, i) = '\0';
 
@@ -1027,10 +992,7 @@ dolist(const char *b, const char *e, int n)
 				for (sp2 = buf; sp2 < buf + i; ) {
 					const char *le = eol(sp2, buf + i);
 					if (isblankline(sp2, le)) {
-						/* found blank — check what follows */
-						const char *after = le;
-						while (after < buf + i && isblankline(after, eol(after, buf + i)))
-							after = eol(after, buf + i);
+						const char *after = skip_blanks(le, buf + i);
 						if (after < buf + i) {
 							int st2;
 							char d2, m2;
@@ -1058,10 +1020,7 @@ dolist(const char *b, const char *e, int n)
 					sp2 = le;
 				}
 				if (split && !loose) {
-					/* pre-blank: inline (tight paragraph) */
-					const char *pe = split;
-					while (pe > bp && (pe[-1] == '\n' || pe[-1] == ' '))
-						pe--;
+					const char *pe = trim_end(bp, split);
 					while (bp < pe && (*bp == ' ' || *bp == '\t'))
 						bp++;
 					process(bp, pe, 0);
@@ -1093,7 +1052,6 @@ doparagraph(const char *b, const char *e, int n)
 
 	if (!n) return 0;
 	start = b;
-	/* find end: blank line */
 	end = b;
 	while (end < e) {
 		p = eol(end, e);
@@ -1101,10 +1059,8 @@ doparagraph(const char *b, const char *e, int n)
 			break;
 		end = p;
 	}
-	/* trim whitespace */
 	while (b < end && (*b == ' ' || *b == '\t')) b++;
-	p = end;
-	while (p > b && (p[-1] == '\n' || p[-1] == '\r' || p[-1] == ' ' || p[-1] == '\t')) p--;
+	p = trim_end(b, end);
 	if (!tight) {
 		fputs("<p", stdout);
 		if (has_pending()) {
@@ -1120,8 +1076,6 @@ doparagraph(const char *b, const char *e, int n)
 	fputc('\n', stdout);
 	return -(end - start);
 }
-
-/* --- inline parsers --- */
 
 static int
 dolinebreak(const char *b, const char *e, int n)
@@ -1165,7 +1119,6 @@ docode(const char *b, const char *e, int n)
 	if (n || *b != '`') return 0;
 	count = leadc(b, e, '`');
 	p = b + count;
-	/* find matching close */
 	while (p < e) {
 		if (*p != '`') { p++; continue; }
 		run = leadc(p, e, '`');
@@ -1353,7 +1306,6 @@ dosurround(const char *b, const char *e, int n)
 	return 0;
 }
 
-/* print plain text for image alt: strip markup delimiters */
 static void
 altprint(const char *b, const char *e)
 {
@@ -1449,7 +1401,6 @@ dolink(const char *b, const char *e, int n)
 		}
 	}
 
-	/* find ] */
 	depth = 1;
 	text = p + 1;
 	for (q = text; q < e; q++) {
@@ -1462,7 +1413,6 @@ dolink(const char *b, const char *e, int n)
 	q++; /* past ] */
 
 	if (q < e && *q == '(') {
-		/* inline link */
 		dest = q + 1;
 		depth = 1;
 		for (q = dest; q < e; q++) {
@@ -1472,7 +1422,6 @@ dolink(const char *b, const char *e, int n)
 		}
 		if (q >= e) return 0;
 		destend = q;
-		/* trim whitespace from dest */
 		while (dest < destend && isws(*dest)) dest++;
 		while (destend > dest && isws(destend[-1])) destend--;
 		if (img) {
@@ -1608,11 +1557,8 @@ doreplace(const char *b, const char *e, int n)
 	int run, em, en;
 	char before, after;
 	int can_open, can_close;
-	(void)e; /* may be unused */
-
 	if (n) return 0;
 
-	/* smart dashes */
 	if (*b == '-' && b + 1 < e && b[1] == '-') {
 		run = leadc(b, e, '-');
 		em = 0; en = 0;
@@ -1625,7 +1571,6 @@ doreplace(const char *b, const char *e, int n)
 		return run;
 	}
 
-	/* smart replace table */
 	for (i = 0; i < LEN(smartreplace); i++) {
 		l = strlen(smartreplace[i][0]);
 		if ((int)(e - b) >= (int)l && !strncmp(b, smartreplace[i][0], l)) {
@@ -1641,7 +1586,6 @@ doreplace(const char *b, const char *e, int n)
 		return 2;
 	}
 
-	/* smart quotes */
 	if (*b == '"' || *b == '\'') {
 		before = (b > e - (e - b)) ? 0 : *(b - 1);
 		after = (b + 1 < e) ? b[1] : 0;
@@ -1697,15 +1641,12 @@ doreplace(const char *b, const char *e, int n)
 		}
 	}
 
-	/* HTML escapes */
 	if (*b == '&') { fputs("&amp;", stdout); return 1; }
 	if (*b == '<') { fputs("&lt;", stdout); return 1; }
 	if (*b == '>') { fputs("&gt;", stdout); return 1; }
 
 	return 0;
 }
-
-/* --- main dispatch --- */
 
 static void
 process(const char *b, const char *e, int newblock)
@@ -1736,7 +1677,6 @@ process(const char *b, const char *e, int newblock)
 	}
 }
 
-/* concatenate url parts into static buffer, stripping whitespace */
 static char urlbuf[4096];
 static int urlbuflen;
 
@@ -1750,17 +1690,46 @@ urlbuf_add(const char *b, const char *e)
 	}
 }
 
-/* pre-scan for reference definitions: [label]: url (possibly multi-line) */
+/* pre-scan: collect reference defs, footnote defs, and heading auto-refs */
 static void
-scan_refs(const char *b, const char *e)
+prescan(const char *b, const char *e)
 {
-	const char *p, *line, *label, *nextline;
-	int labellen;
+	const char *p, *line, *label;
+	int labellen, sp;
+	/* deferred heading refs: added only if no explicit ref exists */
+	struct { const char *content; int len; const char *line; } hdefs[128];
+	int nhdefs = 0;
 
 	line = b;
 	while (line < e) {
 		p = line;
 		while (p < e && *p == ' ') p++;
+		sp = p - line;
+
+		/* footnote definition: [^label]: content */
+		if (p + 2 < e && p[0] == '[' && p[1] == '^') {
+			const char *fl = p + 2;
+			const char *fp = fl;
+			while (fp < e && *fp != ']' && *fp != '\n') fp++;
+			if (fp < e && *fp == ']' && fp + 1 < e && fp[1] == ':') {
+				int ll = fp - fl;
+				fp += 2;
+				while (fp < e && (*fp == ' ' || *fp == '\t')) fp++;
+				const char *cend = trim_end(fp, eol(line, e));
+				if (ll > 0 && nfootnotes < (int)LEN(footnotes)) {
+					footnotes[nfootnotes].label = fl;
+					footnotes[nfootnotes].labellen = ll;
+					footnotes[nfootnotes].content = fp;
+					footnotes[nfootnotes].contentlen = cend - fp;
+					footnotes[nfootnotes].used = 0;
+					nfootnotes++;
+				}
+				line = eol(line, e);
+				continue;
+			}
+		}
+
+		/* reference definition: [label]: url */
 		if (p < e && *p == '[') {
 			p++;
 			label = p;
@@ -1772,24 +1741,21 @@ scan_refs(const char *b, const char *e)
 					p++;
 					while (p < e && (*p == ' ' || *p == '\t')) p++;
 					urlbuflen = 0;
-					/* URL starts on same line or next line */
 					if (p < e && *p != '\n') {
 						const char *ue = p;
 						while (ue < e && *ue != '\n') ue++;
 						urlbuf_add(p, ue);
 					}
-					/* continuation lines (indented) */
-					nextline = eol(line, e);
+					const char *nextline = eol(line, e);
 					while (nextline < e) {
-						int sp = spaces(nextline, e);
-						if (sp == 0 || isblankline(nextline, eol(nextline, e)))
+						int ns = spaces(nextline, e);
+						if (ns == 0 || isblankline(nextline, eol(nextline, e)))
 							break;
 						const char *le = eol(nextline, e);
-						urlbuf_add(nextline + sp, le);
+						urlbuf_add(nextline + ns, le);
 						nextline = le;
 					}
 					if (labellen > 0 && nrefs < (int)LEN(refs)) {
-						/* copy url to permanent storage */
 						char *u = malloc(urlbuflen + 1);
 						if (u) {
 							memcpy(u, urlbuf, urlbuflen);
@@ -1800,143 +1766,83 @@ scan_refs(const char *b, const char *e)
 						refs[nrefs].url = u;
 						refs[nrefs].urllen = urlbuflen;
 						refs[nrefs].attrs[0] = '\0';
-						/* check for {attrs} on previous line */
-						if (line > b) {
-							const char *prev = line - 1;
-							while (prev > b && prev[-1] != '\n') prev--;
-							const char *pp = prev;
-							while (pp < line && (*pp == ' ' || *pp == '\t')) pp++;
-							if (pp < line && *pp == '{') {
-								const char *pe = pp + 1;
-								while (pe < line && *pe != '}') pe++;
-								if (pe < line) {
-									char aid[1], acls[1];
-									parse_attrs(pp+1, pe, aid, 1, acls, 1,
-									    refs[nrefs].attrs, sizeof(refs[nrefs].attrs));
-								}
-							}
-						}
+						prev_line_attrs(line, b,
+						    &(char){0}, 1, &(char){0}, 1,
+						    refs[nrefs].attrs, sizeof(refs[nrefs].attrs));
 						nrefs++;
 					}
+					line = eol(line, e);
+					continue;
 				}
 			}
 		}
-		line = eol(line, e);
-	}
-}
 
-/* pre-scan headings to create implicit reference definitions */
-static void
-scan_heading_refs(const char *b, const char *e)
-{
-	const char *line, *p;
-
-	line = b;
-	while (line < e) {
-		p = line;
-		int sp = spaces(p, e);
+		/* heading: defer auto-reference until after all explicit refs */
 		if (sp <= 3) {
-			p += sp;
+			p = line + sp;
 			int lvl = leadc(p, e, '#');
 			if (lvl >= 1 && lvl <= 6 && p + lvl < e
 			    && (p[lvl] == ' ' || p[lvl] == '\n')) {
 				const char *content = p + lvl;
 				if (*content == ' ') content++;
-				const char *cend = eol(line, e);
-				while (cend > content && (cend[-1] == '\n' || cend[-1] == '\r'
-				    || cend[-1] == ' ' || cend[-1] == '\t'))
-					cend--;
-				if (cend > content && nrefs < (int)LEN(refs)
-				    && !findref(content, cend - content, &(const char *){0}, &(int){0})) {
-					/* check for {#id} on previous line */
-					char custom_id[128] = {0};
-					if (line > b) {
-						const char *prev = line - 1;
-						while (prev > b && prev[-1] != '\n') prev--;
-						const char *pp = prev;
-						while (pp < line && (*pp == ' ' || *pp == '\t')) pp++;
-						if (pp < line && *pp == '{') {
-							const char *pe = pp + 1;
-							while (pe < line && *pe != '}') pe++;
-							if (pe < line && *pe == '}')
-								parse_attrs(pp + 1, pe, custom_id, sizeof(custom_id),
-								    &(char){0}, 1, &(char){0}, 1);
-						}
-					}
-					/* build #id URL */
-					char idbuf[256];
-					int idn = 0;
-					if (custom_id[0]) {
-						idn = strlen(custom_id);
-						if (idn > (int)sizeof(idbuf) - 2) idn = sizeof(idbuf) - 2;
-						memcpy(idbuf, custom_id, idn);
-					} else {
-						const char *s;
-						for (s = content; s < cend && idn < (int)sizeof(idbuf) - 2; s++) {
-							if (*s == ' ' || *s == '\t' || *s == '\n')
-								idbuf[idn++] = '-';
-							else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
-								idbuf[idn++] = *s;
-						}
-						while (idn > 0 && idbuf[idn-1] == '-') idn--;
-					}
-					{
-						int ss = 0;
-						if (!custom_id[0])
-							while (ss < idn && idbuf[ss] == '-') ss++;
-						int ulen = idn - ss + 1;
-						char *u = malloc(ulen + 1);
-						if (u) {
-							u[0] = '#';
-							memcpy(u + 1, idbuf + ss, idn - ss);
-							u[ulen] = '\0';
-							refs[nrefs].label = content;
-							refs[nrefs].labellen = cend - content;
-							refs[nrefs].url = u;
-							refs[nrefs].urllen = ulen;
-							nrefs++;
-						}
-					}
+				const char *cend = trim_end(content, eol(line, e));
+				if (cend > content && nhdefs < (int)LEN(hdefs)) {
+					hdefs[nhdefs].content = content;
+					hdefs[nhdefs].len = cend - content;
+					hdefs[nhdefs].line = line;
+					nhdefs++;
 				}
 			}
 		}
+
 		line = eol(line, e);
 	}
-}
 
-/* pre-scan for footnote definitions: [^label]: content */
-static void
-scan_footnotes(const char *b, const char *e)
-{
-	const char *p, *line, *label, *content, *cend;
-
-	line = b;
-	while (line < e) {
-		p = line;
-		while (p < e && *p == ' ') p++;
-		if (p + 2 < e && p[0] == '[' && p[1] == '^') {
-			p += 2;
-			label = p;
-			while (p < e && *p != ']' && *p != '\n') p++;
-			if (p < e && *p == ']' && p + 1 < e && p[1] == ':') {
-				int labellen = p - label;
-				p += 2; /* past ]: */
-				while (p < e && (*p == ' ' || *p == '\t')) p++;
-				content = p;
-				cend = eol(line, e);
-				while (cend > content && (cend[-1] == '\n' || cend[-1] == ' '))
-					cend--;
-				if (labellen > 0 && nfootnotes < (int)LEN(footnotes)) {
-					footnotes[nfootnotes].label = label;
-					footnotes[nfootnotes].labellen = labellen;
-					footnotes[nfootnotes].content = content;
-					footnotes[nfootnotes].contentlen = cend - content;
-					footnotes[nfootnotes].used = 0;
-					nfootnotes++;
+	/* register heading auto-refs (skipping headings with explicit refs) */
+	{
+		int hi;
+		for (hi = 0; hi < nhdefs && nrefs < (int)LEN(refs); hi++) {
+			if (findref(hdefs[hi].content, hdefs[hi].len,
+			    &(const char *){0}, &(int){0}))
+				continue;
+			char custom_id[128] = {0};
+			prev_line_attrs(hdefs[hi].line, b,
+			    custom_id, sizeof(custom_id),
+			    &(char){0}, 1, &(char){0}, 1);
+			char idbuf[256];
+			int idn = 0;
+			if (custom_id[0]) {
+				idn = strlen(custom_id);
+				if (idn > (int)sizeof(idbuf) - 2) idn = sizeof(idbuf) - 2;
+				memcpy(idbuf, custom_id, idn);
+			} else {
+				const char *s, *se = hdefs[hi].content + hdefs[hi].len;
+				for (s = hdefs[hi].content; s < se && idn < (int)sizeof(idbuf) - 2; s++) {
+					if (*s == ' ' || *s == '\t' || *s == '\n')
+						idbuf[idn++] = '-';
+					else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
+						idbuf[idn++] = *s;
+				}
+				while (idn > 0 && idbuf[idn-1] == '-') idn--;
+			}
+			{
+				int ss = 0;
+				if (!custom_id[0])
+					while (ss < idn && idbuf[ss] == '-') ss++;
+				int ulen = idn - ss + 1;
+				char *u = malloc(ulen + 1);
+				if (u) {
+					u[0] = '#';
+					memcpy(u + 1, idbuf + ss, idn - ss);
+					u[ulen] = '\0';
+					refs[nrefs].label = hdefs[hi].content;
+					refs[nrefs].labellen = hdefs[hi].len;
+					refs[nrefs].url = u;
+					refs[nrefs].urllen = ulen;
+					nrefs++;
 				}
 			}
 		}
-		line = eol(line, e);
 	}
 }
 
@@ -1970,7 +1876,6 @@ main(void)
 	int len = 0, cap = 0;
 	int n;
 
-	/* read stdin */
 	do {
 		cap += BUFSIZ;
 		buf = realloc(buf, cap);
@@ -1979,15 +1884,16 @@ main(void)
 		len += n;
 	} while (n > 0);
 
-	scan_refs(buf, buf + len);
-	scan_footnotes(buf, buf + len);
-	scan_heading_refs(buf, buf + len);
+	prescan(buf, buf + len);
 	process(buf, buf + len, 1);
 
-	/* close remaining sections */
 	close_sections(0);
 	emit_endnotes();
 
 	free(buf);
+	for (n = 0; n < nrefs; n++)
+		free((char *)refs[n].url);
+	for (n = 0; n < nused_ids; n++)
+		free(used_ids[n]);
 	return 0;
 }
