@@ -1,6 +1,11 @@
 #!/bin/sh
 # Test runner for djot-to-HTML converter
 # Parses .test files: blocks delimited by backtick fences, . separates input from expected
+#
+# Tests are from jgm/djot.js. Omitted tests:
+# - symb.test: uses AST output format, not HTML (djot symbols have no standard HTML mapping)
+# - attributes.test #35 (2 blocks): uses AST output format for multi-line attribute edge cases
+# - filters.test, sourcepos.test: not applicable to a simple stdin-to-stdout converter
 
 pass=0
 fail=0
