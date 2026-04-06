@@ -928,7 +928,6 @@ dolist(const char *b, const char *e, int n)
 						break;
 				}
 				q = eol(line, e);
-				/* strip up to indent spaces for lazy lines */
 				{
 					int strip = sp;
 					if (strip > indent) strip = indent;
@@ -940,6 +939,30 @@ dolist(const char *b, const char *e, int n)
 				}
 				line = q;
 				continue;
+			}
+			/* after blank: allow lazy if last content was a sub-list */
+			{
+				const char *lb = buf + i;
+				/* skip trailing blanks in buffer */
+				while (lb > buf && lb[-1] == '\n') lb--;
+				/* find start of last line */
+				{
+					const char *ls = lb;
+					while (ls > buf && ls[-1] != '\n') ls--;
+					int st2;
+					char d2, m2;
+					if (scan_marker(ls + spaces(ls, lb), lb,
+					    &st2, &(int){0}, &d2, &m2)) {
+						/* last content is sub-list: lazy OK */
+						q = eol(line, e);
+						for (p = line; p < q; p++) {
+							ADDC(buf, i) = *p;
+							i++;
+						}
+						line = q;
+						continue;
+					}
+				}
 			}
 			break;
 		}
