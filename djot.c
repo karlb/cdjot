@@ -53,6 +53,7 @@ static int nfootnotes;
 static int sections[6], nsections;
 static int in_container;
 static int tight;
+static const char *proc_base;
 
 static char pending_id[128];
 static char pending_class[128];
@@ -173,6 +174,35 @@ findref(const char *label, int len, const char **url, int *urllen)
 }
 
 
+static int
+make_slug(const char *b, int len, char *out, int outsz)
+{
+	const char *s = b, *se = b + len;
+	int hi = 0;
+	while (s < se && isws(*s)) s++;
+	while (se > s && isws(se[-1])) se--;
+	for (; s < se && hi < outsz - 1; s++) {
+		if (*s == '[' && s + 1 < se && s[1] == '^') {
+			while (s < se && *s != ']') s++;
+			continue;
+		}
+		if (*s == ' ' || *s == '\t' || *s == '\n') {
+			if (hi == 0 || out[hi-1] != '-')
+				out[hi++] = '-';
+		} else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
+			out[hi++] = *s;
+	}
+	while (hi > 0 && out[hi-1] == '-') hi--;
+	{
+		int ss = 0;
+		while (ss < hi && out[ss] == '-') ss++;
+		memmove(out, out + ss, hi - ss);
+		hi -= ss;
+	}
+	out[hi] = '\0';
+	return hi;
+}
+
 static void
 close_sections(int level)
 {
@@ -245,6 +275,19 @@ emit_attrs(const char *id, const char *cls, const char *extra)
 	if (id && id[0]) printf(" id=\"%s\"", id);
 	if (cls && cls[0]) printf(" class=\"%s\"", cls);
 	if (extra && extra[0]) printf(" %s", extra);
+}
+
+static void
+emit_fence_lines(const char *b, const char *e, int indent)
+{
+	const char *q;
+	for (q = b; q < e; ) {
+		const char *le = eol(q, e);
+		int strip = spaces(q, le);
+		if (strip > indent) strip = indent;
+		hprint(q + strip, le);
+		q = le;
+	}
 }
 
 static void
@@ -434,31 +477,7 @@ doheading(const char *b, const char *e, int n)
 		if (pending_id[0]) {
 			snprintf(hid, sizeof(hid), "%s", pending_id);
 		} else if (blen > 0) {
-			/* generate id into buffer */
-			int hi = 0;
-			const char *s = buf, *se = buf + blen;
-			while (s < se && isws(*s)) s++;
-			while (se > s && isws(se[-1])) se--;
-			for (; s < se && hi < (int)sizeof(hid) - 1; s++) {
-				/* skip footnote references [^...] */
-				if (*s == '[' && s + 1 < se && s[1] == '^') {
-					while (s < se && *s != ']') s++;
-					continue;
-				}
-				if (*s == ' ' || *s == '\t' || *s == '\n') {
-					if (hi == 0 || hid[hi-1] != '-')
-						hid[hi++] = '-';
-				} else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
-					hid[hi++] = *s;
-			}
-			while (hi > 0 && hid[hi-1] == '-') hi--;
-			{
-				int ss = 0;
-				while (ss < hi && hid[ss] == '-') ss++;
-				memmove(hid, hid + ss, hi - ss);
-				hi -= ss;
-			}
-			hid[hi] = '\0';
+			make_slug(buf, blen, hid, sizeof(hid));
 		} else {
 			snprintf(hid, sizeof(hid), "s-%d", nsections + 1);
 		}
@@ -577,14 +596,7 @@ docodefence(const char *b, const char *e, int n)
 		int cl = leadc(q, e, fch);
 		if (cl >= flen && isblankline(q + cl, eol(line, e))) {
 			emit_code_open(info, infoend);
-			/* print content, stripping indent */
-			for (q = p; q < line; ) {
-				const char *le = eol(q, line);
-				int strip = spaces(q, le);
-				if (strip > indent) strip = indent;
-				hprint(q + strip, le);
-				q = le;
-			}
+			emit_fence_lines(p, line, indent);
 			fputs("</code></pre>\n", stdout);
 			return -(eol(line, e) - b);
 		}
@@ -592,13 +604,7 @@ docodefence(const char *b, const char *e, int n)
 	}
 	/* unclosed: treat rest as code */
 	emit_code_open(info, infoend);
-	for (q = p; q < e; ) {
-		const char *le = eol(q, e);
-		int strip = spaces(q, le);
-		if (strip > indent) strip = indent;
-		hprint(q + strip, le);
-		q = le;
-	}
+	emit_fence_lines(p, e, indent);
 	fputs("</code></pre>\n", stdout);
 	return -(e - b);
 }
@@ -1587,7 +1593,7 @@ doreplace(const char *b, const char *e, int n)
 	}
 
 	if (*b == '"' || *b == '\'') {
-		before = (b > e - (e - b)) ? 0 : *(b - 1);
+		before = (b > proc_base) ? *(b - 1) : 0;
 		after = (b + 1 < e) ? b[1] : 0;
 		/* explicit closer: '} or "} */
 		if (after == '}') {
@@ -1652,9 +1658,11 @@ static void
 process(const char *b, const char *e, int newblock)
 {
 	const char *p;
+	const char *save_base = proc_base;
 	int affected;
 	unsigned int i;
 
+	proc_base = b;
 	for (p = b; p < e; ) {
 		if (newblock)
 			while (p < e && *p == '\n')
@@ -1675,6 +1683,7 @@ process(const char *b, const char *e, int newblock)
 		else
 			newblock = affected < 0;
 	}
+	proc_base = save_base;
 }
 
 static char urlbuf[4096];
@@ -1810,30 +1819,22 @@ prescan(const char *b, const char *e)
 			    custom_id, sizeof(custom_id),
 			    &(char){0}, 1, &(char){0}, 1);
 			char idbuf[256];
-			int idn = 0;
+			int idn;
 			if (custom_id[0]) {
 				idn = strlen(custom_id);
 				if (idn > (int)sizeof(idbuf) - 2) idn = sizeof(idbuf) - 2;
 				memcpy(idbuf, custom_id, idn);
+				idbuf[idn] = '\0';
 			} else {
-				const char *s, *se = hdefs[hi].content + hdefs[hi].len;
-				for (s = hdefs[hi].content; s < se && idn < (int)sizeof(idbuf) - 2; s++) {
-					if (*s == ' ' || *s == '\t' || *s == '\n')
-						idbuf[idn++] = '-';
-					else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
-						idbuf[idn++] = *s;
-				}
-				while (idn > 0 && idbuf[idn-1] == '-') idn--;
+				idn = make_slug(hdefs[hi].content, hdefs[hi].len,
+				    idbuf, sizeof(idbuf));
 			}
 			{
-				int ss = 0;
-				if (!custom_id[0])
-					while (ss < idn && idbuf[ss] == '-') ss++;
-				int ulen = idn - ss + 1;
+				int ulen = idn + 1;
 				char *u = malloc(ulen + 1);
 				if (u) {
 					u[0] = '#';
-					memcpy(u + 1, idbuf + ss, idn - ss);
+					memcpy(u + 1, idbuf, idn);
 					u[ulen] = '\0';
 					refs[nrefs].label = hdefs[hi].content;
 					refs[nrefs].labellen = hdefs[hi].len;
