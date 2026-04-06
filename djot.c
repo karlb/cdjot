@@ -781,19 +781,12 @@ dolist(const char *b, const char *e, int n)
 			break;
 		}
 
-		/* trim trailing blank lines from item */
-		while (i > 0 && buf[i-1] == '\n') i--;
-		ADDC(buf, i) = '\0';
-
-		/* check if loose: blank line immediately precedes next sibling */
+		/* check if loose: blank line between this item and next sibling */
 		{
-			/* look back: did the continuation end due to a sibling
-			 * marker after a blank? The blank was consumed into buffer
-			 * so check if buffer ends with a blank separator */
-			int trailing_blank = (i >= 1 && buf[i] == '\0'
-			    && i >= 2 && buf[i-1] == '\n' && (i < 2 || buf[i-2] == '\n'));
-			/* also check for blanks between items in the input */
-			if (trailing_blank || (line < e && isblankline(line, eol(line, e)))) {
+			/* check buffer: trailing \n\n means blank consumed into item */
+			int saw_blank = (i >= 2 && buf[i-1] == '\n' && buf[i-2] == '\n');
+			/* check input: blank still in stream */
+			if (saw_blank || (line < e && isblankline(line, eol(line, e)))) {
 				const char *lp = line;
 				while (lp < e && isblankline(lp, eol(lp, e)))
 					lp = eol(lp, e);
@@ -808,6 +801,10 @@ dolist(const char *b, const char *e, int n)
 				line = lp;
 			}
 		}
+
+		/* trim trailing blank lines from item */
+		while (i > 0 && buf[i-1] == '\n') i--;
+		ADDC(buf, i) = '\0';
 
 		{
 			int save_tight = tight;
