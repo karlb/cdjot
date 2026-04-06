@@ -660,7 +660,6 @@ dolist(const char *b, const char *e, int n)
 	line = b;
 	{
 	int marker_col = sp;
-	int between_blank = 0; /* blank line between items */
 	while (line < e) {
 		int item_sp, item_mw;
 
@@ -765,15 +764,28 @@ dolist(const char *b, const char *e, int n)
 		while (i > 0 && buf[i-1] == '\n') i--;
 		ADDC(buf, i) = '\0';
 
-		/* blank between end of this item and start of next = loose */
-		between_blank = had_blank;
-		if (between_blank && line < e) {
-			/* there's a next item — this list is loose */
-			int st2;
-			char d2, m2;
-			const char *np = line + spaces(line, e);
-			if (scan_marker(np, e, &st2, &(int){0}, &d2, &m2))
-				loose = 1;
+		/* check if loose: blank line immediately precedes next sibling */
+		{
+			/* look back: did the continuation end due to a sibling
+			 * marker after a blank? The blank was consumed into buffer
+			 * so check if buffer ends with a blank separator */
+			int trailing_blank = (i >= 1 && buf[i] == '\0'
+			    && i >= 2 && buf[i-1] == '\n' && (i < 2 || buf[i-2] == '\n'));
+			/* also check for blanks between items in the input */
+			if (trailing_blank || (line < e && isblankline(line, eol(line, e)))) {
+				const char *lp = line;
+				while (lp < e && isblankline(lp, eol(lp, e)))
+					lp = eol(lp, e);
+				if (lp < e) {
+					int st2;
+					char d2, m2;
+					const char *np = lp + spaces(lp, e);
+					if (spaces(lp, e) == marker_col
+					    && scan_marker(np, e, &st2, &(int){0}, &d2, &m2))
+						loose = 1;
+				}
+				line = lp;
+			}
 		}
 
 		{
@@ -782,7 +794,34 @@ dolist(const char *b, const char *e, int n)
 			in_container = 1;
 			fputs("<li>\n", stdout);
 			if (!loose) tight = 1;
-			process(buf, buf + i, 1);
+			/* find first blank line to split inline vs block content */
+			{
+				const char *bp = buf, *be = buf + i;
+				const char *split = NULL;
+				const char *sp2;
+				for (sp2 = bp; sp2 < be; ) {
+					const char *le = eol(sp2, be);
+					if (isblankline(sp2, le)) {
+						split = sp2;
+						break;
+					}
+					sp2 = le;
+				}
+				if (split && !loose) {
+					/* pre-blank: inline (tight paragraph) */
+					const char *pe = split;
+					while (pe > bp && (pe[-1] == '\n' || pe[-1] == ' '))
+						pe--;
+					while (bp < pe && (*bp == ' ' || *bp == '\t'))
+						bp++;
+					process(bp, pe, 0);
+					fputc('\n', stdout);
+					/* post-blank: block */
+					process(split, be, 1);
+				} else {
+					process(buf, buf + i, 1);
+				}
+			}
 			tight = save_tight;
 			in_container = save_cont;
 		}
