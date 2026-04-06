@@ -855,8 +855,12 @@ dolist(const char *b, const char *e, int n)
 			else if (d2 != delim) break;
 			else if (st2 != style) {
 				int compat = 0;
-				if ((style == 4 && st2 == 2) || (style == 5 && st2 == 3))
-					compat = 1;
+				if ((style == 4 && st2 == 2) || (style == 5 && st2 == 3)) {
+					/* roman list, alpha item: only if char is a roman digit */
+					const char *rchars = (style == 5) ? "IVXLCDM" : "ivxlcdm";
+					if (strchr(rchars, p[p[0] == '(' ? 1 : 0]))
+						compat = 1;
+				}
 				if ((style == 2 && st2 == 4) || (style == 3 && st2 == 5))
 					compat = 1;
 				if (!compat) break;
@@ -1075,8 +1079,10 @@ dolinebreak(const char *b, const char *e, int n)
 		return 0;
 	}
 	if (*b == '\n') {
+		const char *q = b + 1;
+		while (q < e && (*q == ' ' || *q == '\t')) q++;
 		fputc('\n', stdout);
-		return 1;
+		return q - b;
 	}
 	return 0;
 }
