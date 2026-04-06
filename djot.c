@@ -876,7 +876,8 @@ doattr(const char *b, const char *e, int n)
 			snprintf(pending_attrs, sizeof(pending_attrs), "%s", textra);
 		}
 	}
-	return -(eol(b, e) - b);
+	/* consume up to and including the line containing } */
+	return -(eol(q, e) - b);
 }
 
 static int
@@ -1686,8 +1687,9 @@ doparagraph(const char *b, const char *e, int n)
 				}
 				continue;
 			}
-			if (*s == '{' && s > b && s[-1] != ' ' && s[-1] != '\n'
-			    && s[-1] != '\t' && s[-1] != '\\' && s[-1] != ']') {
+			if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
+				int preceded_by_word = (s > b && s[-1] != ' ' && s[-1] != '\n'
+				    && s[-1] != '\t');
 				/* check if this looks like {attrs} (not {_ {* etc.) */
 				if (s + 1 < p && (s[1] == '#' || s[1] == '.'
 				    || s[1] == '%' || isalpha((unsigned char)s[1]))) {
@@ -1710,29 +1712,34 @@ doparagraph(const char *b, const char *e, int n)
 						if (parse_attrs(s + 1, q, tid, sizeof(tid),
 						    tcls, sizeof(tcls), textra, sizeof(textra))
 						    || (q == s + 1)) {
-							/* found valid inline attrs — find word start */
-							int wstart = nlen;
-							/* walk back past non-space content */
-							while (wstart > 0 && nbuf[wstart-1] != ' '
-							    && nbuf[wstart-1] != '\n'
-							    && nbuf[wstart-1] != '\t'
-							    && nbuf[wstart-1] != '>')
-								wstart--;
-							/* insert [ before word */
-							if (nlen + 2 > ncap) {
-								ncap = (ncap + 2) * 2;
-								nbuf = realloc(nbuf, ncap);
-							}
-							memmove(nbuf + wstart + 1, nbuf + wstart, nlen - wstart);
-							nbuf[wstart] = '[';
-							nlen++;
-							/* add ] before {attrs} */
-							if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
-							nbuf[nlen++] = ']';
-							/* copy {attrs} verbatim */
-							while (s <= q) {
+							if (preceded_by_word) {
+								/* found valid inline attrs — find word start */
+								int wstart = nlen;
+								/* walk back past non-space content */
+								while (wstart > 0 && nbuf[wstart-1] != ' '
+								    && nbuf[wstart-1] != '\n'
+								    && nbuf[wstart-1] != '\t'
+								    && nbuf[wstart-1] != '>')
+									wstart--;
+								/* insert [ before word */
+								if (nlen + 2 > ncap) {
+									ncap = (ncap + 2) * 2;
+									nbuf = realloc(nbuf, ncap);
+								}
+								memmove(nbuf + wstart + 1, nbuf + wstart, nlen - wstart);
+								nbuf[wstart] = '[';
+								nlen++;
+								/* add ] before {attrs} */
 								if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
-								nbuf[nlen++] = *s++;
+								nbuf[nlen++] = ']';
+								/* copy {attrs} verbatim */
+								while (s <= q) {
+									if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+									nbuf[nlen++] = *s++;
+								}
+							} else {
+								/* attrs preceded by space/start — consume silently */
+								s = q + 1;
 							}
 							transformed = 1;
 							continue;
@@ -2272,11 +2279,11 @@ dolink(const char *b, const char *e, int n)
 		}
 		return q + 1 - b;
 	}
-	/* span syntax [text]{.class #id ...} */
+	/* span syntax [text]{.class #id ...} — may span lines */
 	if (q < e && *q == '{') {
 		const char *ab = q + 1;
 		const char *ae = ab;
-		while (ae < e && *ae != '}' && *ae != '\n') ae++;
+		while (ae < e && *ae != '}') ae++;
 		if (ae < e && *ae == '}') {
 			char sid[128], scls[128], sextra[256];
 			parse_attrs(ab, ae, sid, sizeof(sid),
