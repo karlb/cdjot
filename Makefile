@@ -3,17 +3,11 @@ PREFIX = /usr/local
 CFLAGS = -std=c99 -Wall -Wextra -pedantic -Os
 LDFLAGS =
 
-SRC = djot.c block.c inline.c buf.c
-OBJ = $(SRC:.c=.o)
-
-djot: $(OBJ)
-	$(CC) $(LDFLAGS) -o $@ $(OBJ)
-
-.c.o:
-	$(CC) $(CFLAGS) -c $<
+djot: djot.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ djot.c
 
 clean:
-	rm -f djot $(OBJ)
+	rm -f djot
 
 test: djot
 	sh test.sh
