@@ -659,7 +659,8 @@ dolist(const char *b, const char *e, int n)
 	had_blank = 0;
 	line = b;
 	{
-	int marker_col = sp; /* column where the list marker character starts */
+	int marker_col = sp;
+	int between_blank = 0; /* blank line between items */
 	while (line < e) {
 		int item_sp, item_mw;
 
@@ -705,8 +706,13 @@ dolist(const char *b, const char *e, int n)
 			sp = spaces(line, e);
 			if (sp > marker_col) {
 				/* indented past marker column: part of this item */
-				int strip = sp;
-				if (strip > indent) strip = indent;
+				int strip;
+				if (sp >= indent && !had_blank)
+					strip = indent; /* content column */
+				else if (sp >= indent && had_blank)
+					strip = marker_col + 1; /* post-blank: preserve nesting */
+				else
+					strip = marker_col + 1;
 				q = eol(line, e);
 				for (p = line + strip; p < q; p++) {
 					ADDC(buf, i) = *p;
@@ -739,10 +745,11 @@ dolist(const char *b, const char *e, int n)
 						break;
 				}
 				q = eol(line, e);
-				/* strip up to marker_col+1 spaces for lazy lines */
+				/* strip up to indent spaces for lazy lines */
 				{
 					int strip = sp;
 					if (strip > indent) strip = indent;
+					else if (strip > marker_col + 1) strip = marker_col + 1;
 					for (p = line + strip; p < q; p++) {
 						ADDC(buf, i) = *p;
 						i++;
@@ -758,7 +765,16 @@ dolist(const char *b, const char *e, int n)
 		while (i > 0 && buf[i-1] == '\n') i--;
 		ADDC(buf, i) = '\0';
 
-		if (had_blank) loose = 1;
+		/* blank between end of this item and start of next = loose */
+		between_blank = had_blank;
+		if (between_blank && line < e) {
+			/* there's a next item — this list is loose */
+			int st2;
+			char d2, m2;
+			const char *np = line + spaces(line, e);
+			if (scan_marker(np, e, &st2, &(int){0}, &d2, &m2))
+				loose = 1;
+		}
 
 		{
 			int save_tight = tight;
@@ -784,9 +800,10 @@ dolist(const char *b, const char *e, int n)
 static int
 doparagraph(const char *b, const char *e, int n)
 {
-	const char *p, *end;
+	const char *p, *end, *start;
 
 	if (!n) return 0;
+	start = b;
 	/* find end: blank line */
 	end = b;
 	while (end < e) {
@@ -795,14 +812,15 @@ doparagraph(const char *b, const char *e, int n)
 			break;
 		end = p;
 	}
-	/* trim trailing whitespace */
+	/* trim whitespace */
+	while (b < end && (*b == ' ' || *b == '\t')) b++;
 	p = end;
 	while (p > b && (p[-1] == '\n' || p[-1] == '\r' || p[-1] == ' ' || p[-1] == '\t')) p--;
 	if (!tight) fputs("<p>", stdout);
 	process(b, p, 0);
 	if (!tight) fputs("</p>", stdout);
 	fputc('\n', stdout);
-	return -(end - b);
+	return -(end - start);
 }
 
 /* --- inline parsers --- */
