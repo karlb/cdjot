@@ -944,9 +944,22 @@ dolist(const char *b, const char *e, int n)
 			break;
 		}
 
-		/* check if loose: blank line between items */
+		/* check if loose: blank line between items (not after sub-list) */
 		{
 			int saw_blank = (i >= 2 && buf[i-1] == '\n' && buf[i-2] == '\n');
+			if (saw_blank) {
+				/* check line before trailing blank: if it's a sub-list marker,
+				 * the blank is within sub-content, not between items */
+				const char *lb = buf + i - 2;
+				while (lb > buf && lb[-1] != '\n') lb--;
+				{
+					int st2;
+					char d2, m2;
+					const char *np = lb + spaces(lb, buf + i);
+					if (scan_marker(np, buf + i, &st2, &(int){0}, &d2, &m2))
+						saw_blank = 0;
+				}
+			}
 			if (saw_blank || (line < e && isblankline(line, eol(line, e)))) {
 				const char *lp = line;
 				while (lp < e && isblankline(lp, eol(lp, e)))
