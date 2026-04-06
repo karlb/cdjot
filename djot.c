@@ -42,6 +42,7 @@ static int nrefs;
 
 /* heading section stack */
 static int sections[6], nsections;
+static int in_container; /* suppress sections inside blockquotes/lists */
 
 static void
 die(const char *msg)
@@ -124,14 +125,23 @@ findref(const char *label, int len, const char **url, int *urllen)
 static void
 heading_id(const char *b, const char *e)
 {
-	/* trim */
+	char idbuf[256];
+	int n = 0;
+
 	while (b < e && isws(*b)) b++;
 	while (e > b && isws(e[-1])) e--;
-	for (; b < e; b++) {
+	for (; b < e && n < (int)sizeof(idbuf) - 1; b++) {
 		if (*b == ' ' || *b == '\t' || *b == '\n')
-			fputc('-', stdout);
+			idbuf[n++] = '-';
 		else if (isalnum((unsigned char)*b) || *b == '-' || *b == '_')
-			fputc(*b, stdout);
+			idbuf[n++] = *b;
+	}
+	/* trim leading/trailing '-' */
+	while (n > 0 && idbuf[n-1] == '-') n--;
+	{
+		int s = 0;
+		while (s < n && idbuf[s] == '-') s++;
+		fwrite(idbuf + s, 1, n - s, stdout);
 	}
 }
 
@@ -149,7 +159,7 @@ close_sections(int level)
 static int
 dorefdef(const char *b, const char *e, int n)
 {
-	const char *p;
+	const char *p, *line;
 
 	if (!n) return 0;
 	p = b;
@@ -160,8 +170,15 @@ dorefdef(const char *b, const char *e, int n)
 	if (p >= e || *p != ']') return 0;
 	p++;
 	if (p >= e || *p != ':') return 0;
-	/* consume the whole line */
-	return -(eol(b, e) - b);
+	/* consume this line and any indented continuation lines */
+	line = eol(b, e);
+	while (line < e) {
+		int sp = spaces(line, e);
+		if (sp == 0 || isblankline(line, eol(line, e)))
+			break;
+		line = eol(line, e);
+	}
+	return -(line - b);
 }
 
 static int
@@ -182,14 +199,13 @@ doheading(const char *b, const char *e, int n)
 	p += level;
 	if (p < e && *p != ' ' && *p != '\n') return 0;
 	if (p < e && *p == ' ') p++;
-	/* trim trailing # and whitespace from first line */
+	/* find end of first line content */
 	content = p;
-	q = eol(p, e) - 1; /* before \n */
-	if (q > content && *q == '\n') q--;
-	while (q > content && *q == ' ') q--;
-	while (q > content && *q == '#') q--;
-	while (q > content && *q == ' ') q--;
-	cend = q + 1;
+	q = eol(p, e);
+	while (q > content && (q[-1] == '\n' || q[-1] == '\r'
+	    || q[-1] == ' ' || q[-1] == '\t'))
+		q--;
+	cend = q;
 
 	/* collect continuation lines into buf */
 	buf = NULL;
@@ -212,8 +228,10 @@ doheading(const char *b, const char *e, int n)
 		if (hl >= 1 && hl <= 6 && hl != level && lp + hl < e
 		    && (lp[hl] == ' ' || lp[hl] == '\n'))
 			break; /* different heading level */
-		ADDC(buf, blen) = '\n';
-		blen++;
+		if (blen > 0) {
+			ADDC(buf, blen) = '\n';
+			blen++;
+		}
 		if (hl == level && lp + hl < e && (lp[hl] == ' ' || lp[hl] == '\n')) {
 			/* same level: strip prefix */
 			lp += hl;
@@ -225,7 +243,7 @@ doheading(const char *b, const char *e, int n)
 		while (q > lp && (q[-1] == '\n' || q[-1] == '\r'
 		    || q[-1] == ' ' || q[-1] == '\t'))
 			q--;
-		for (; lp <= q; lp++) {
+		for (; lp < q; lp++) {
 			ADDC(buf, blen) = *lp;
 			blen++;
 		}
@@ -237,16 +255,24 @@ doheading(const char *b, const char *e, int n)
 		blen--;
 	ADDC(buf, blen) = '\0';
 
-	close_sections(level);
-	fputs("<section id=\"", stdout);
-	if (blen > 0)
-		heading_id(buf, buf + blen);
-	else
-		printf("s-%d", nsections + 1);
-	fputs("\">\n", stdout);
-	if (nsections < 6) sections[nsections++] = level;
+	if (!in_container) {
+		close_sections(level);
+		fputs("<section id=\"", stdout);
+		if (blen > 0)
+			heading_id(buf, buf + blen);
+		else
+			printf("s-%d", nsections + 1);
+		fputs("\">\n", stdout);
+		if (nsections < 6) sections[nsections++] = level;
+	}
 
-	printf("<h%d>", level);
+	printf("<h%d", level);
+	if (in_container) {
+		fputs(" id=\"", stdout);
+		if (blen > 0) heading_id(buf, buf + blen);
+		fputc('"', stdout);
+	}
+	fputc('>', stdout);
 	process(buf, buf + blen, 0);
 	printf("</h%d>\n", level);
 	free(buf);
@@ -300,9 +326,14 @@ doblockquote(const char *b, const char *e, int n)
 		}
 	}
 	ADDC(buf, i) = '\0';
-	fputs("<blockquote>\n", stdout);
-	process(buf, buf + i, 1);
-	fputs("</blockquote>\n", stdout);
+	{
+		int save = in_container;
+		in_container = 1;
+		fputs("<blockquote>\n", stdout);
+		process(buf, buf + i, 1);
+		fputs("</blockquote>\n", stdout);
+		in_container = save;
+	}
 	free(buf);
 	return -(line - b);
 }
@@ -409,13 +440,165 @@ dothematicbreak(const char *b, const char *e, int n)
 	return -(eol(b, e) - b);
 }
 
+/* roman numeral value, -1 if not valid */
+static int
+roman_val(const char *b, const char *e, int upper)
+{
+	static const struct { const char *s; int v; } rtab[] = {
+		{"m",1000},{"cm",900},{"d",500},{"cd",400},{"c",100},{"xc",90},
+		{"l",50},{"xl",40},{"x",10},{"ix",9},{"v",5},{"iv",4},{"i",1}
+	};
+	int val = 0, prev = 10000;
+	const char *p = b;
+	unsigned int i;
+
+	if (p >= e || !isalpha((unsigned char)*p)) return -1;
+	while (p < e) {
+		int found = 0;
+		for (i = 0; i < LEN(rtab); i++) {
+			int l = strlen(rtab[i].s);
+			if (p + l <= e) {
+				int match;
+				if (upper) {
+					match = (l == 1) ? (toupper((unsigned char)rtab[i].s[0]) == *p)
+					    : (toupper((unsigned char)rtab[i].s[0]) == p[0]
+					    && toupper((unsigned char)rtab[i].s[1]) == p[1]);
+				} else {
+					match = !strncmp(p, rtab[i].s, l);
+				}
+				if (match && rtab[i].v <= prev) {
+					val += rtab[i].v;
+					prev = rtab[i].v;
+					p += l;
+					found = 1;
+					break;
+				}
+			}
+		}
+		if (!found) return -1;
+	}
+	return val > 0 ? val : -1;
+}
+
+/*
+ * Parse list marker at p. Returns offset past marker+space, or 0.
+ * Sets *style: 0=bullet, 1=decimal, 2=lower-alpha, 3=upper-alpha,
+ *              4=lower-roman, 5=upper-roman
+ * Sets *start to the start number, *delim to the delimiter char.
+ * Sets *mch to the bullet character (for bullet lists).
+ */
+static int
+scan_marker(const char *p, const char *e, int *style, int *start,
+    char *delim, char *mch)
+{
+	const char *q, *s = p;
+	int num;
+
+	if (p >= e) return 0;
+
+	/* bullet */
+	if (*p == '-' || *p == '*' || *p == '+') {
+		if (p + 1 >= e || (p[1] != ' ' && p[1] != '\t' && p[1] != '\n'))
+			return 0;
+		*style = 0; *mch = *p; *delim = *p;
+		p++;
+		if (p < e && *p == ' ') p++;
+		return p - s;
+	}
+
+	/* (X) style */
+	if (*p == '(') {
+		p++;
+		q = p;
+		while (q < e && *q != ')' && *q != '\n') q++;
+		if (q >= e || *q != ')') return 0;
+		if (q + 1 >= e || (q[1] != ' ' && q[1] != '\n')) return 0;
+		/* try decimal */
+		if (isdigit((unsigned char)*p)) {
+			num = 0;
+			const char *r = p;
+			while (r < q && isdigit((unsigned char)*r))
+				num = num * 10 + (*r++ - '0');
+			if (r == q) {
+				*style = 1; *start = num; *delim = '(';
+				q += 2; /* past ) and space */
+				if (q[-1] != ' ' && q[-1] != '\n') q--;
+				return q - s;
+			}
+		}
+		/* single letter: alpha first */
+		if (isalpha((unsigned char)*p) && q == p + 1) {
+			*style = isupper((unsigned char)*p) ? 3 : 2;
+			*start = tolower((unsigned char)*p) - 'a' + 1;
+			*delim = '(';
+			q++;
+			if (q < e && *q == ' ') q++;
+			return q - s;
+		}
+		/* multi-letter: try roman */
+		num = roman_val(p, q, isupper((unsigned char)*p));
+		if (num > 0) {
+			*style = isupper((unsigned char)*p) ? 5 : 4;
+			*start = num;
+			*delim = '(';
+			q++;
+			if (q < e && *q == ' ') q++;
+			return q - s;
+		}
+		return 0;
+	}
+
+	/* decimal: N. or N) */
+	if (isdigit((unsigned char)*p)) {
+		num = 0;
+		while (p < e && isdigit((unsigned char)*p))
+			num = num * 10 + (*p++ - '0');
+		if (p >= e || (*p != '.' && *p != ')')) return 0;
+		*delim = *p++;
+		if (p >= e || (*p != ' ' && *p != '\n')) return 0;
+		if (*p == ' ') p++;
+		*style = 1; *start = num;
+		return p - s;
+	}
+
+	/* alpha or roman: X. or X) */
+	if (isalpha((unsigned char)*p)) {
+		q = p;
+		while (q < e && isalpha((unsigned char)*q)) q++;
+		if (q >= e || (*q != '.' && *q != ')')) return 0;
+		if (q + 1 >= e || (q[1] != ' ' && q[1] != '\n')) return 0;
+		/* single letter: try alpha first */
+		if (q == p + 1) {
+			*style = isupper((unsigned char)*p) ? 3 : 2;
+			*start = tolower((unsigned char)*p) - 'a' + 1;
+			*delim = *q++;
+			if (q < e && *q == ' ') q++;
+			return q - s;
+		}
+		/* multi-letter: try roman */
+		num = roman_val(p, q, isupper((unsigned char)*p));
+		if (num > 0) {
+			*style = isupper((unsigned char)*p) ? 5 : 4;
+			*start = num;
+			*delim = *q++;
+			if (q < e && *q == ' ') q++;
+			return q - s;
+		}
+		return 0;
+	}
+	return 0;
+}
+
 static int
 dolist(const char *b, const char *e, int n)
 {
+	static const char *typattr[] = { "", "", " type=\"a\"", " type=\"A\"",
+	    " type=\"i\"", " type=\"I\"" };
 	const char *p, *q, *line;
 	char *buf;
-	int i, sp, indent, ordered, start_num, loose, had_blank;
-	char marker;
+	int i, sp, indent, loose, had_blank;
+	int style, start_num;
+	char delim, mch;
 
 	if (!n) return 0;
 	p = b;
@@ -423,33 +606,51 @@ dolist(const char *b, const char *e, int n)
 	if (sp > 3) return 0;
 	p += sp;
 
-	/* detect marker */
-	ordered = 0;
-	marker = *p;
-	if (marker == '-' || marker == '*' || marker == '+') {
-		p++;
-	} else if (isdigit((unsigned char)*p)) {
-		start_num = 0;
-		while (p < e && isdigit((unsigned char)*p))
-			start_num = start_num * 10 + (*p++ - '0');
-		if (p >= e || (*p != '.' && *p != ')')) return 0;
-		marker = *p++;
-		ordered = 1;
-	} else {
-		return 0;
+	indent = scan_marker(p, e, &style, &start_num, &delim, &mch);
+	if (!indent) return 0;
+	indent += sp;
+
+	/* disambiguate alpha vs roman: check second item */
+	if (style == 2 || style == 3) {
+		/* single-letter alpha — could be roman? */
+		const char *p2 = p + indent - sp;
+		const char *line2;
+		int rval = roman_val(p, p + 1, style == 3);
+		if (rval > 0) {
+			/* look at second item */
+			line2 = eol(b, e);
+			while (line2 < e && isblankline(line2, eol(line2, e)))
+				line2 = eol(line2, e);
+			if (line2 < e) {
+				int st2, sn2;
+				char d2, m2;
+				p2 = line2 + spaces(line2, e);
+				if (scan_marker(p2, e, &st2, &sn2, &d2, &m2)) {
+					if ((st2 == 4 || st2 == 5) && d2 == delim) {
+						/* second item is roman — switch */
+						style = (style == 2) ? 4 : 5;
+						start_num = rval;
+					} else if (st2 == style && d2 == delim) {
+						/* second item is also alpha, check if repeated roman */
+						int rval2 = roman_val(p2, p2 + 1, style == 3);
+						if (rval2 == rval) {
+							style = (style == 2) ? 4 : 5;
+							start_num = rval;
+						}
+					}
+				}
+			}
+		}
 	}
-	if (p >= e || (*p != ' ' && *p != '\t' && *p != '\n')) return 0;
-	if (p < e && *p == ' ') p++;
-	indent = p - b;
 
 	/* open list */
-	if (ordered) {
-		if (start_num != 1)
-			printf("<ol start=\"%d\">\n", start_num);
-		else
-			fputs("<ol>\n", stdout);
-	} else {
+	if (style == 0) {
 		fputs("<ul>\n", stdout);
+	} else {
+		fputs("<ol", stdout);
+		if (start_num != 1) printf(" start=\"%d\"", start_num);
+		fputs(typattr[style], stdout);
+		fputs(">\n", stdout);
 	}
 
 	/* parse items */
@@ -457,20 +658,36 @@ dolist(const char *b, const char *e, int n)
 	had_blank = 0;
 	line = b;
 	while (line < e) {
-		/* verify this line starts with the same marker */
-		p = line;
-		sp = spaces(p, e);
-		p += sp;
-		if (!ordered) {
-			if (*p != marker) break;
-		} else {
-			while (p < e && isdigit((unsigned char)*p)) p++;
-			if (p >= e || *p != marker) break;
+		/* verify this line starts with the same marker type */
+		{
+			int s2, st2;
+			char d2, m2;
+			p = line + spaces(line, e);
+			s2 = scan_marker(p, e, &st2, &(int){0}, &d2, &m2);
+			if (!s2) break;
+			if (style == 0) { if (st2 != 0 || m2 != mch) break; }
+			else if (d2 != delim) break;
+			else if (st2 != style) {
+				/* allow alpha/roman compatibility */
+				int compat = 0;
+				if ((style == 4 && st2 == 2) || (style == 5 && st2 == 3))
+					compat = 1; /* roman list, alpha marker */
+				if ((style == 2 && st2 == 4) || (style == 3 && st2 == 5))
+					compat = 1; /* alpha list, roman marker */
+				if (!compat) break;
+			}
 		}
 		/* collect one item's content */
 		buf = NULL;
 		i = 0;
-		/* first line: skip marker */
+		/* first line: skip marker (recalculate indent per item) */
+		{
+			int item_indent;
+			const char *mp = line + spaces(line, e);
+			item_indent = scan_marker(mp, e, &(int){0}, &(int){0},
+			    &(char){0}, &(char){0});
+			indent = item_indent + (mp - line);
+		}
 		p = line + indent;
 		q = eol(line, e);
 		for (; p < q; p++) { ADDC(buf, i) = *p; i++; }
@@ -490,15 +707,14 @@ dolist(const char *b, const char *e, int n)
 			/* new item at same level? */
 			if (sp < indent) {
 				/* check if it's a matching marker */
-				if (!ordered && *p == marker && p + 1 < e
-				    && (p[1] == ' ' || p[1] == '\n'))
-					break;
-				if (ordered && isdigit((unsigned char)*p)) {
-					q = p;
-					while (q < e && isdigit((unsigned char)*q)) q++;
-					if (q < e && *q == marker && q + 1 < e
-					    && (q[1] == ' ' || q[1] == '\n'))
-						break;
+				{
+					int s2, st2;
+					char d2, m2;
+					s2 = scan_marker(p, e, &st2, &(int){0}, &d2, &m2);
+					if (s2) {
+						if (style == 0 && st2 == 0 && m2 == mch) break;
+						if (style != 0 && st2 == style && d2 == delim) break;
+					}
 				}
 				/* sub-list after blank? */
 				if (had_blank && sp > 0) {
@@ -514,14 +730,10 @@ dolist(const char *b, const char *e, int n)
 				/* lazy continuation (no blank, in paragraph) */
 				if (!had_blank) {
 					/* don't lazy-continue if line is any list marker */
-					if ((*p == '-' || *p == '*' || *p == '+')
-					    && p + 1 < e && (p[1] == ' ' || p[1] == '\n'))
-						break;
-					if (isdigit((unsigned char)*p)) {
-						q = p;
-						while (q < e && isdigit((unsigned char)*q)) q++;
-						if (q < e && (*q == '.' || *q == ')')
-						    && q + 1 < e && (q[1] == ' ' || q[1] == '\n'))
+					{
+						int st2;
+						char d2, m2;
+						if (scan_marker(p, e, &st2, &(int){0}, &d2, &m2))
 							break;
 					}
 					q = eol(line, e);
@@ -561,7 +773,7 @@ dolist(const char *b, const char *e, int n)
 		had_blank = 0;
 	}
 
-	fputs(ordered ? "</ol>\n" : "</ul>\n", stdout);
+	fputs(style == 0 ? "</ul>\n" : "</ol>\n", stdout);
 	return -(line - b);
 }
 
@@ -691,30 +903,55 @@ dosurround(const char *b, const char *e, int n)
 			if (q >= e) break;
 			continue;
 		}
-		if (*p == '[') { /* skip link syntax */
+		if (*p == '<') { /* skip autolinks */
+			const char *q = p + 1;
+			while (q < e && *q != '>' && *q != '<' && *q != '\n') q++;
+			if (q < e && *q == '>' &&
+			    (memchr(p+1, ':', q-p-1) || memchr(p+1, '@', q-p-1))) {
+				p = q;
+				continue;
+			}
+		}
+		/* skip [text](url) only if url contains our delimiter */
+		if (*p == '[') {
+			/* find ] and check for (url) */
 			int depth = 1;
 			const char *q = p + 1;
+			int has_delim = 0;
 			while (q < e && depth > 0) {
 				if (*q == '\\' && q + 1 < e) { q += 2; continue; }
 				if (*q == '[') depth++;
 				if (*q == ']') depth--;
+				if (*q == ch) has_delim = 1;
 				q++;
 			}
-			if (q < e && *q == '(') {
+			if (q < e && *q == '(' && has_delim) {
+				/* delimiter is in text part — don't skip, let it match */
+			} else if (q < e && *q == '(' && !has_delim) {
+				/* skip the url part only */
 				depth = 1; q++;
 				while (q < e && depth > 0) {
 					if (*q == '(') depth++;
 					if (*q == ')') depth--;
 					q++;
 				}
+				p = q - 1;
+				continue;
 			}
-			p = q - 1;
-			continue;
 		}
 		if (*p == ch) {
 			/* djot closer rule: character before marker is not whitespace */
 			char bb = (p > start) ? p[-1] : 0;
 			if (isws(bb)) continue;
+			if (p == start) continue; /* no empty emphasis */
+			/* reject if content is all delimiter chars */
+			{
+				const char *t;
+				int alldelim = 1;
+				for (t = start; t < p; t++)
+					if (*t != ch) { alldelim = 0; break; }
+				if (alldelim) continue;
+			}
 			stop = p;
 			fputs(ch == '_' ? "<em>" : "<strong>", stdout);
 			process(start, stop, 0);
@@ -723,6 +960,51 @@ dosurround(const char *b, const char *e, int n)
 		}
 	}
 	return 0;
+}
+
+/* print plain text for image alt: strip markup delimiters */
+static void
+altprint(const char *b, const char *e)
+{
+	for (; b < e; b++) {
+		if (*b == '_' || *b == '*') continue;
+		if (*b == '\\' && b + 1 < e && isasciipunct(b[1])) { b++; hprint(b, b+1); continue; }
+		if (*b == '`') {
+			int cnt = leadc(b, e, '`');
+			const char *q = b + cnt;
+			while (q < e) {
+				if (*q != '`') { q++; continue; }
+				if (leadc(q, e, '`') == cnt) {
+					hprint(b + cnt, q);
+					b = q + cnt - 1;
+					goto next;
+				}
+				q += leadc(q, e, '`');
+			}
+		}
+		if (*b == '[') {
+			const char *q = b + 1;
+			int d = 1;
+			while (q < e && d > 0) {
+				if (*q == '[') d++;
+				if (*q == ']') d--;
+				q++;
+			}
+			if (q < e && *q == '(') {
+				altprint(b + 1, q - 1);
+				d = 1; q++;
+				while (q < e && d > 0) {
+					if (*q == '(') d++;
+					if (*q == ')') d--;
+					q++;
+				}
+				b = q - 1;
+				continue;
+			}
+		}
+		hprint(b, b + 1);
+		next:;
+	}
 }
 
 static void
@@ -785,7 +1067,7 @@ dolink(const char *b, const char *e, int n)
 		while (destend > dest && isws(destend[-1])) destend--;
 		if (img) {
 			fputs("<img alt=\"", stdout);
-			hprint(text, textend);
+			altprint(text, textend);
 			fputs("\" src=\"", stdout);
 			emit_url(dest, destend);
 			fputs("\">", stdout);
@@ -914,6 +1196,7 @@ doreplace(const char *b, const char *e, int n)
 	/* HTML escapes */
 	if (*b == '&') { fputs("&amp;", stdout); return 1; }
 	if (*b == '<') { fputs("&lt;", stdout); return 1; }
+	if (*b == '>') { fputs("&gt;", stdout); return 1; }
 
 	return 0;
 }
@@ -949,11 +1232,25 @@ process(const char *b, const char *e, int newblock)
 	}
 }
 
-/* pre-scan for reference definitions: [label]: url */
+/* concatenate url parts into static buffer, stripping whitespace */
+static char urlbuf[4096];
+static int urlbuflen;
+
+static void
+urlbuf_add(const char *b, const char *e)
+{
+	while (b < e && urlbuflen < (int)sizeof(urlbuf) - 1) {
+		if (*b != '\n' && *b != '\r' && *b != ' ' && *b != '\t')
+			urlbuf[urlbuflen++] = *b;
+		b++;
+	}
+}
+
+/* pre-scan for reference definitions: [label]: url (possibly multi-line) */
 static void
 scan_refs(const char *b, const char *e)
 {
-	const char *p, *line, *label, *url, *urlend;
+	const char *p, *line, *label, *nextline;
 	int labellen;
 
 	line = b;
@@ -970,14 +1267,34 @@ scan_refs(const char *b, const char *e)
 				if (p < e && *p == ':') {
 					p++;
 					while (p < e && (*p == ' ' || *p == '\t')) p++;
-					url = p;
-					while (p < e && *p != '\n' && *p != ' ') p++;
-					urlend = p;
+					urlbuflen = 0;
+					/* URL starts on same line or next line */
+					if (p < e && *p != '\n') {
+						const char *ue = p;
+						while (ue < e && *ue != '\n') ue++;
+						urlbuf_add(p, ue);
+					}
+					/* continuation lines (indented) */
+					nextline = eol(line, e);
+					while (nextline < e) {
+						int sp = spaces(nextline, e);
+						if (sp == 0 || isblankline(nextline, eol(nextline, e)))
+							break;
+						const char *le = eol(nextline, e);
+						urlbuf_add(nextline + sp, le);
+						nextline = le;
+					}
 					if (labellen > 0 && nrefs < (int)LEN(refs)) {
+						/* copy url to permanent storage */
+						char *u = malloc(urlbuflen + 1);
+						if (u) {
+							memcpy(u, urlbuf, urlbuflen);
+							u[urlbuflen] = '\0';
+						}
 						refs[nrefs].label = label;
 						refs[nrefs].labellen = labellen;
-						refs[nrefs].url = url;
-						refs[nrefs].urllen = urlend - url;
+						refs[nrefs].url = u;
+						refs[nrefs].urllen = urlbuflen;
 						nrefs++;
 					}
 				}
