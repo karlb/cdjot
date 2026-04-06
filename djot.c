@@ -1503,12 +1503,24 @@ doreplace(const char *b, const char *e, int n)
 		}
 	}
 
+	/* explicit quote markers: {' → left, '} → right */
+	if (*b == '{' && b + 1 < e && (b[1] == '\'' || b[1] == '"')) {
+		int dbl = (b[1] == '"');
+		fputs(dbl ? "\xe2\x80\x9c" : "\xe2\x80\x98", stdout);
+		return 2;
+	}
+
 	/* smart quotes */
 	if (*b == '"' || *b == '\'') {
 		before = (b > e - (e - b)) ? 0 : *(b - 1);
 		after = (b + 1 < e) ? b[1] : 0;
-		/* ' before digit is always apostrophe */
-		if (*b == '\'' && isdigit((unsigned char)after)) {
+		/* explicit closer: '} or "} */
+		if (after == '}') {
+			fputs(*b == '"' ? "\xe2\x80\x9d" : "\xe2\x80\x99", stdout);
+			return 2; /* consume the } too */
+		}
+		/* ' before digit or after ] is always apostrophe */
+		if (*b == '\'' && (isdigit((unsigned char)after) || before == ']')) {
 			fputs("\xe2\x80\x99", stdout);
 			return 1;
 		}
