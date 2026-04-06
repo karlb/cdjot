@@ -1279,6 +1279,7 @@ doreplace(const char *b, const char *e, int n)
 		em = 0; en = 0;
 		if (run % 3 == 0)      { em = run / 3; }
 		else if (run % 3 == 1) { en = 2; em = (run - 4) / 3; }
+		else if (run % 2 == 0) { en = run / 2; }
 		else                   { en = 1; em = (run - 2) / 3; }
 		while (em-- > 0) fputs("\xe2\x80\x94", stdout);
 		while (en-- > 0) fputs("\xe2\x80\x93", stdout);
