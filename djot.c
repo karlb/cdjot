@@ -1654,17 +1654,119 @@ doparagraph(const char *b, const char *e, int n)
 	}
 	while (b < end && (*b == ' ' || *b == '\t')) b++;
 	p = trim_end(b, end);
-	if (!tight) {
-		fputs("<p", stdout);
-		if (has_pending()) {
-			if (pending_id[0])
-				dedup_id(pending_id, sizeof(pending_id));
-			emit_attrs(pending_id, pending_class, pending_attrs);
+
+	/* pre-process: transform word{attrs} into [word]{attrs} */
+	{
+		char *nbuf = NULL;
+		int nlen = 0, ncap = 0;
+		const char *s = b;
+		int transformed = 0;
+
+		while (s < p) {
+			if (*s == '\\' && s + 1 < p) {
+				/* copy escape + next char */
+				if (nlen + 2 > ncap) { ncap = (ncap + 2) * 2; nbuf = realloc(nbuf, ncap); }
+				nbuf[nlen++] = *s++;
+				nbuf[nlen++] = *s++;
+				continue;
+			}
+			if (*s == '`') {
+				/* skip code spans */
+				int cnt = leadc(s, p, '`');
+				const char *q = s + cnt;
+				while (q < p) {
+					if (*q == '`' && leadc(q, p, '`') == cnt) {
+						q += cnt; break;
+					}
+					q++;
+				}
+				while (s < q) {
+					if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+					nbuf[nlen++] = *s++;
+				}
+				continue;
+			}
+			if (*s == '{' && s > b && s[-1] != ' ' && s[-1] != '\n'
+			    && s[-1] != '\t' && s[-1] != '\\' && s[-1] != ']') {
+				/* check if this looks like {attrs} (not {_ {* etc.) */
+				if (s + 1 < p && (s[1] == '#' || s[1] == '.'
+				    || s[1] == '%' || isalpha((unsigned char)s[1]))) {
+					/* find matching } */
+					const char *q = s + 1;
+					while (q < p && *q != '}') {
+						if (*q == '\\' && q + 1 < p) q += 2;
+						else if (*q == '"') {
+							q++;
+							while (q < p && *q != '"') {
+								if (*q == '\\' && q + 1 < p) q += 2;
+								else q++;
+							}
+							if (q < p) q++;
+						} else q++;
+					}
+					if (q < p && *q == '}') {
+						/* validate attrs */
+						char tid[128], tcls[128], textra[256];
+						if (parse_attrs(s + 1, q, tid, sizeof(tid),
+						    tcls, sizeof(tcls), textra, sizeof(textra))
+						    || (q == s + 1)) {
+							/* found valid inline attrs — find word start */
+							int wstart = nlen;
+							/* walk back past non-space content */
+							while (wstart > 0 && nbuf[wstart-1] != ' '
+							    && nbuf[wstart-1] != '\n'
+							    && nbuf[wstart-1] != '\t'
+							    && nbuf[wstart-1] != '>')
+								wstart--;
+							/* insert [ before word */
+							if (nlen + 2 > ncap) {
+								ncap = (ncap + 2) * 2;
+								nbuf = realloc(nbuf, ncap);
+							}
+							memmove(nbuf + wstart + 1, nbuf + wstart, nlen - wstart);
+							nbuf[wstart] = '[';
+							nlen++;
+							/* add ] before {attrs} */
+							if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+							nbuf[nlen++] = ']';
+							/* copy {attrs} verbatim */
+							while (s <= q) {
+								if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+								nbuf[nlen++] = *s++;
+							}
+							transformed = 1;
+							continue;
+						}
+					}
+				}
+				/* also handle {} — consume silently */
+				if (s + 1 < p && s[1] == '}') {
+					s += 2;
+					transformed = 1;
+					continue;
+				}
+			}
+			if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+			nbuf[nlen++] = *s++;
 		}
-		clear_pending();
-		fputc('>', stdout);
+
+		if (!tight) {
+			fputs("<p", stdout);
+			if (has_pending()) {
+				if (pending_id[0])
+					dedup_id(pending_id, sizeof(pending_id));
+				emit_attrs(pending_id, pending_class, pending_attrs);
+			}
+			clear_pending();
+			fputc('>', stdout);
+		}
+		if (transformed) {
+			process(nbuf, nbuf + nlen, 0);
+		} else {
+			process(b, p, 0);
+		}
+		free(nbuf);
 	}
-	process(b, p, 0);
 	if (!tight) fputs("</p>", stdout);
 	fputc('\n', stdout);
 	return -(end - start);
