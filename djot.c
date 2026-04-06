@@ -929,7 +929,9 @@ docode(const char *b, const char *e, int n)
 		if (run == count) {
 			code = b + count;
 			codelen = p - code;
-			if (codelen >= 2 && code[0] == ' ' && code[codelen-1] == ' ') {
+			/* trim single space from each end (single backtick only) */
+			if (count == 1 && codelen >= 2
+			    && code[0] == ' ' && code[codelen-1] == ' ') {
 				code++;
 				codelen -= 2;
 			}
