@@ -988,6 +988,11 @@ dosurround(const char *b, const char *e, int n)
 	start = b + 1 + consumed_open;
 	for (p = start; p < e; p++) {
 		if (*p == '\\' && p + 1 < e) { p++; continue; }
+		/* skip explicit openers {_ and closers _} that aren't ours */
+		if (*p == '{' && p + 1 < e && p[1] == ch) {
+			p++; /* skip the { and the delimiter will be skipped by loop */
+			continue;
+		}
 		if (*p == '`') { /* skip code spans */
 			int cnt = leadc(p, e, '`');
 			const char *q = p + cnt;
