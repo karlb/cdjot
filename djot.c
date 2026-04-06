@@ -215,8 +215,11 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 						extra[en++] = *p++;
 					if (p < e) { extra[en++] = '"'; p++; }
 				} else {
+					/* wrap unquoted value in quotes */
+					if (en < exsz - 1) extra[en++] = '"';
 					while (p < e && *p != ' ' && *p != '}' && en < exsz - 1)
 						extra[en++] = *p++;
+					if (en < exsz - 1) extra[en++] = '"';
 				}
 			}
 			extra[en] = '\0';
@@ -321,6 +324,7 @@ dorefdef(const char *b, const char *e, int n)
 	if (p >= e || *p != ']') return 0;
 	p++;
 	if (p >= e || *p != ':') return 0;
+	clear_pending(); /* attributes before refdef apply to the ref, not next block */
 	/* consume this line and any indented continuation lines */
 	line = eol(b, e);
 	while (line < e) {
