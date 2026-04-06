@@ -940,17 +940,31 @@ dosurround(const char *b, const char *e, int n)
 {
 	const char *p, *start, *stop;
 	char ch, after;
+	int explicit_open = 0; /* {_ or {* */
+	int consumed_open = 0; /* extra chars consumed for { */
 
 	if (n) return 0;
-	ch = *b;
-	if (ch != '_' && ch != '*') return 0;
 
-	/* djot opener rule: character after marker is not whitespace */
-	after = (b + 1 < e) ? b[1] : 0;
-	if (isws(after)) return 0;
+	/* check for explicit opener {_ or {* */
+	if (*b == '{' && b + 1 < e && (b[1] == '_' || b[1] == '*')) {
+		ch = b[1];
+		explicit_open = 1;
+		consumed_open = 1;
+		after = (b + 2 < e) ? b[2] : 0;
+	} else {
+		ch = *b;
+		if (ch != '_' && ch != '*') return 0;
+		/* _} is an explicit closer without opener — skip, will be literal */
+		if (b + 1 < e && b[1] == '}') return 0;
+		after = (b + 1 < e) ? b[1] : 0;
+	}
+
+	/* djot opener rule: character after marker is not whitespace
+	 * (explicit openers bypass this rule) */
+	if (!explicit_open && isws(after)) return 0;
 
 	/* find matching close */
-	start = b + 1;
+	start = b + 1 + consumed_open;
 	for (p = start; p < e; p++) {
 		if (*p == '\\' && p + 1 < e) { p++; continue; }
 		if (*p == '`') { /* skip code spans */
@@ -1002,12 +1016,22 @@ dosurround(const char *b, const char *e, int n)
 			}
 		}
 		if (*p == ch) {
-			/* djot closer rule: character before marker is not whitespace */
-			char bb = (p > start) ? p[-1] : 0;
-			if (isws(bb)) continue;
+			int explicit_close = (p + 1 < e && p[1] == '}');
+			int consumed_close = explicit_close ? 1 : 0;
+
+			/* explicit openers only match explicit closers */
+			if (explicit_open && !explicit_close) continue;
+			if (!explicit_open && explicit_close) continue;
+
+			/* djot closer rule: char before marker is not whitespace
+			 * (explicit closers bypass this rule) */
+			if (!explicit_close) {
+				char bb = (p > start) ? p[-1] : 0;
+				if (isws(bb)) continue;
+			}
 			if (p == start) continue; /* no empty emphasis */
 			/* reject if content is all delimiter chars */
-			{
+			if (!explicit_open) {
 				const char *t;
 				int alldelim = 1;
 				for (t = start; t < p; t++)
@@ -1018,7 +1042,7 @@ dosurround(const char *b, const char *e, int n)
 			fputs(ch == '_' ? "<em>" : "<strong>", stdout);
 			process(start, stop, 0);
 			fputs(ch == '_' ? "</em>" : "</strong>", stdout);
-			return stop + 1 - b;
+			return stop + 1 + consumed_close - b;
 		}
 	}
 	return 0;
