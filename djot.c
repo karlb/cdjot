@@ -32,6 +32,9 @@ static int doautolink(const char *b, const char *e, int n);
 static int doreplace(const char *b, const char *e, int n);
 static void process(const char *b, const char *e, int newblock);
 static void hprint(const char *b, const char *e);
+static void clear_pending(void);
+static int has_pending(void);
+static void emit_attrs(const char *id, const char *cls, const char *extra);
 
 static Parser parsers[] = {
 	doattr, dorefdef, doheading, doblockquote, docodefence, dodiv,
@@ -229,21 +232,28 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 	if (extra) extra[0] = '\0';
 
 	while (p < e) {
-		while (p < e && (*p == ' ' || *p == '\t')) p++;
+		while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
 		if (p >= e) break;
 		if (*p == '#') {
 			/* id */
 			p++;
-			while (p < e && *p != ' ' && *p != '}' && idn < idsz - 1)
+			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
+			    && *p != '}' && idn < idsz - 1)
 				id[idn++] = *p++;
 			id[idn] = '\0';
 		} else if (*p == '.') {
 			/* class */
 			p++;
 			if (cn > 0 && cn < clssz - 1) cls[cn++] = ' ';
-			while (p < e && *p != ' ' && *p != '}' && cn < clssz - 1)
+			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
+			    && *p != '}' && cn < clssz - 1)
 				cls[cn++] = *p++;
 			cls[cn] = '\0';
+		} else if (*p == '%') {
+			/* comment: skip to next % or end */
+			p++;
+			while (p < e && *p != '%') p++;
+			if (p < e) p++; /* skip closing % */
 		} else if (isalpha((unsigned char)*p)) {
 			/* key=val */
 			if (en > 0 && en < exsz - 1) extra[en++] = ' ';
@@ -255,8 +265,28 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 				if (p < e && *p == '"') {
 					extra[en++] = '"';
 					p++;
-					while (p < e && *p != '"' && en < exsz - 1)
-						extra[en++] = *p++;
+					while (p < e && *p != '"' && en < exsz - 1) {
+						if (*p == '\\' && p + 1 < e) {
+							p++; /* skip backslash */
+							if (*p == '\\') {
+								extra[en++] = '\\';
+								p++;
+							} else if (*p == '"') {
+								/* escaped quote: emit &quot; */
+								if (en + 5 < exsz) {
+									memcpy(extra + en, "&quot;", 6);
+									en += 6;
+								}
+								p++;
+							} else if (*p == '*') {
+								extra[en++] = *p++;
+							} else {
+								extra[en++] = *p++;
+							}
+						} else {
+							extra[en++] = *p++;
+						}
+					}
 					if (p < e) { extra[en++] = '"'; p++; }
 				} else {
 					/* wrap unquoted value in quotes */
@@ -298,12 +328,17 @@ emit_fence_lines(const char *b, const char *e, int indent)
 static void
 emit_code_open(const char *info, const char *infoend)
 {
+	fputs("<pre", stdout);
+	if (has_pending()) {
+		emit_attrs(pending_id, pending_class, pending_attrs);
+		clear_pending();
+	}
 	if (info < infoend) {
-		fputs("<pre><code class=\"language-", stdout);
+		fputs("><code class=\"language-", stdout);
 		hprint(info, infoend);
 		fputs("\">", stdout);
 	} else {
-		fputs("<pre><code>", stdout);
+		fputs("><code>", stdout);
 	}
 }
 
@@ -781,9 +816,9 @@ doattr(const char *b, const char *e, int n)
 	p = b;
 	while (p < e && (*p == ' ' || *p == '\t')) p++;
 	if (p >= e || *p != '{') return 0;
-	/* find matching } on same line */
+	/* find matching } — may span multiple lines */
 	q = p + 1;
-	while (q < e && *q != '}' && *q != '\n') q++;
+	while (q < e && *q != '}') q++;
 	if (q >= e || *q != '}') return 0;
 	{
 		const char *r = q + 1;
@@ -794,15 +829,53 @@ doattr(const char *b, const char *e, int n)
 	{
 		const char *fc = p + 1;
 		while (fc < q && (*fc == ' ' || *fc == '\t')) fc++;
-		if (fc >= q) return 0;
+		if (fc >= q) {
+			/* empty attrs {} — consume silently */
+			return -(eol(b, e) - b);
+		}
 		if (*fc != '#' && *fc != '.' && *fc != '%'
 		    && !isalpha((unsigned char)*fc))
 			return 0;
 	}
-	if (!parse_attrs(p + 1, q, pending_id, sizeof(pending_id),
-	    pending_class, sizeof(pending_class),
-	    pending_attrs, sizeof(pending_attrs)))
-		return 0;
+	{
+		char tid[128], tcls[128], textra[256];
+		/* check if entire content is a comment */
+		{
+			const char *cc = p + 1;
+			while (cc < q && (*cc == ' ' || *cc == '\t' || *cc == '\n')) cc++;
+			if (cc < q && *cc == '%') {
+				cc++;
+				while (cc < q && *cc != '%') cc++;
+				if (cc < q && *cc == '%') {
+					cc++;
+					while (cc < q && (*cc == ' ' || *cc == '\t' || *cc == '\n')) cc++;
+					if (cc >= q) {
+						/* pure comment block — consume the line(s) */
+						return -(eol(q, e) - b);
+					}
+				}
+			}
+		}
+		if (!parse_attrs(p + 1, q, tid, sizeof(tid),
+		    tcls, sizeof(tcls), textra, sizeof(textra)))
+			return 0;
+		/* merge into pending */
+		if (tid[0])
+			snprintf(pending_id, sizeof(pending_id), "%s", tid);
+		if (tcls[0]) {
+			if (pending_class[0]) {
+				int n = strlen(pending_class);
+				snprintf(pending_class + n, sizeof(pending_class) - n,
+				    " %s", tcls);
+			} else {
+				snprintf(pending_class, sizeof(pending_class), "%s", tcls);
+			}
+		}
+		if (textra[0]) {
+			/* later key=val overrides earlier */
+			snprintf(pending_attrs, sizeof(pending_attrs), "%s", textra);
+		}
+	}
 	return -(eol(b, e) - b);
 }
 
@@ -986,7 +1059,12 @@ doblockquote(const char *b, const char *e, int n)
 	{
 		int save = in_container;
 		in_container = 1;
-		fputs("<blockquote>\n", stdout);
+		fputs("<blockquote", stdout);
+		if (has_pending()) {
+			emit_attrs(pending_id, pending_class, pending_attrs);
+			clear_pending();
+		}
+		fputs(">\n", stdout);
 		process(buf, buf + i, 1);
 		fputs("</blockquote>\n", stdout);
 		in_container = save;
@@ -1085,7 +1163,12 @@ dothematicbreak(const char *b, const char *e, int n)
 		else if (*p != ' ' && *p != '\t') return 0;
 	}
 	if (count < 3) return 0;
-	fputs("<hr>\n", stdout);
+	fputs("<hr", stdout);
+	if (has_pending()) {
+		emit_attrs(pending_id, pending_class, pending_attrs);
+		clear_pending();
+	}
+	fputs(">\n", stdout);
 	return -(eol(b, e) - b);
 }
 
@@ -1293,11 +1376,33 @@ dolist(const char *b, const char *e, int n)
 	}
 
 	if (style == 0) {
-		fputs(is_task ? "<ul class=\"task-list\">\n" : "<ul>\n", stdout);
+		if (is_task) {
+			if (pending_class[0]) {
+				int cn = strlen(pending_class);
+				if (cn + 10 < (int)sizeof(pending_class)) {
+					memmove(pending_class + 10, pending_class, cn + 1);
+					memcpy(pending_class, "task-list ", 10);
+				}
+			} else {
+				snprintf(pending_class, sizeof(pending_class), "task-list");
+			}
+		}
+		fputs("<ul", stdout);
+		if (has_pending()) {
+			emit_attrs(pending_id, pending_class, pending_attrs);
+			clear_pending();
+		} else if (is_task) {
+			fputs(" class=\"task-list\"", stdout);
+		}
+		fputs(">\n", stdout);
 	} else {
 		fputs("<ol", stdout);
 		if (start_num != 1) printf(" start=\"%d\"", start_num);
 		fputs(typattr[style], stdout);
+		if (has_pending()) {
+			emit_attrs(pending_id, pending_class, pending_attrs);
+			clear_pending();
+		}
 		fputs(">\n", stdout);
 	}
 
@@ -2223,9 +2328,15 @@ process(const char *b, const char *e, int newblock)
 
 	proc_base = b;
 	for (p = b; p < e; ) {
-		if (newblock)
-			while (p < e && *p == '\n')
+		if (newblock) {
+			int had_blank = 0;
+			while (p < e && *p == '\n') {
+				had_blank = 1;
 				if (++p == e) return;
+			}
+			if (had_blank && has_pending())
+				clear_pending();
+		}
 
 		for (i = 0; i < LEN(parsers); i++)
 			if ((affected = parsers[i](p, e, newblock)))
