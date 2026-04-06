@@ -944,11 +944,9 @@ dolist(const char *b, const char *e, int n)
 			break;
 		}
 
-		/* check if loose: blank line between this item and next sibling */
+		/* check if loose: blank line between items */
 		{
-			/* check buffer: trailing \n\n means blank consumed into item */
 			int saw_blank = (i >= 2 && buf[i-1] == '\n' && buf[i-2] == '\n');
-			/* check input: blank still in stream */
 			if (saw_blank || (line < e && isblankline(line, eol(line, e)))) {
 				const char *lp = line;
 				while (lp < e && isblankline(lp, eol(lp, e)))
