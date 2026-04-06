@@ -1627,10 +1627,25 @@ doreplace(const char *b, const char *e, int n)
 		can_close = !isws(before) && (isws(after) || isasciipunct(after) || after == 0);
 		if (*b == '"') {
 			fputs(can_open && !can_close ? "\xe2\x80\x9c" : "\xe2\x80\x9d", stdout);
+		} else if (can_close && !can_open) {
+			fputs("\xe2\x80\x99", stdout);
+		} else if (can_open) {
+			/* look-ahead: simulate stack matching to check if this
+			 * opener has a closer. Unmatched openers → apostrophe */
+			int stack = 1;
+			const char *q;
+			for (q = b + 1; q < e && stack > 0; q++) {
+				if (*q == '\'') {
+					char qb = q[-1], qa = (q+1 < e) ? q[1] : 0;
+					int qo = !isws(qa) && (isws(qb) || isasciipunct(qb));
+					int qc = !isws(qb) && (isws(qa) || isasciipunct(qa) || qa == 0);
+					if (qc) { stack--; if (stack == 0) break; }
+					if (qo) stack++;
+				}
+			}
+			fputs(stack == 0 ? "\xe2\x80\x98" : "\xe2\x80\x99", stdout);
 		} else {
-			if (can_close && !can_open) fputs("\xe2\x80\x99", stdout);
-			else if (can_open && !can_close) fputs("\xe2\x80\x98", stdout);
-			else fputs("\xe2\x80\x99", stdout); /* ambiguous: apostrophe */
+			fputs("\xe2\x80\x99", stdout); /* intra-word: apostrophe */
 		}
 		return 1;
 	}
