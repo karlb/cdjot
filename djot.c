@@ -45,6 +45,14 @@ static struct {
 } refs[128];
 static int nrefs;
 
+/* footnote definitions */
+static struct {
+	const char *label; int labellen;
+	const char *content; int contentlen;
+	int used;
+} footnotes[64];
+static int nfootnotes;
+
 /* heading section stack */
 static int sections[6], nsections;
 static int in_container; /* suppress sections inside blockquotes/lists */
@@ -422,6 +430,11 @@ doheading(const char *b, const char *e, int n)
 			while (s < se && isws(*s)) s++;
 			while (se > s && isws(se[-1])) se--;
 			for (; s < se && hi < (int)sizeof(hid) - 1; s++) {
+				/* skip footnote references [^...] */
+				if (*s == '[' && s + 1 < se && s[1] == '^') {
+					while (s < se && *s != ']') s++;
+					continue;
+				}
 				if (*s == ' ' || *s == '\t' || *s == '\n') {
 					if (hi == 0 || hid[hi-1] != '-')
 						hid[hi++] = '-';
@@ -1417,6 +1430,25 @@ dolink(const char *b, const char *e, int n)
 	if (*p == '!' && p + 1 < e && p[1] == '[') { img = 1; p++; }
 	if (*p != '[') return 0;
 
+	/* footnote reference [^label] */
+	if (!img && p + 1 < e && p[1] == '^') {
+		const char *fl = p + 2;
+		const char *fe = fl;
+		while (fe < e && *fe != ']' && *fe != '\n') fe++;
+		if (fe < e && *fe == ']') {
+			int fi;
+			for (fi = 0; fi < nfootnotes; fi++) {
+				if (footnotes[fi].labellen == fe - fl
+				    && !memcmp(footnotes[fi].label, fl, fe - fl)) {
+					footnotes[fi].used = 1;
+					printf("<a id=\"fnref%.*s\" href=\"#fn%.*s\" role=\"doc-noteref\"><sup>%.*s</sup></a>",
+					    (int)(fe-fl), fl, (int)(fe-fl), fl, (int)(fe-fl), fl);
+					return fe + 1 - b;
+				}
+			}
+		}
+	}
+
 	/* find ] */
 	depth = 1;
 	text = p + 1;
@@ -1872,6 +1904,65 @@ scan_heading_refs(const char *b, const char *e)
 	}
 }
 
+/* pre-scan for footnote definitions: [^label]: content */
+static void
+scan_footnotes(const char *b, const char *e)
+{
+	const char *p, *line, *label, *content, *cend;
+
+	line = b;
+	while (line < e) {
+		p = line;
+		while (p < e && *p == ' ') p++;
+		if (p + 2 < e && p[0] == '[' && p[1] == '^') {
+			p += 2;
+			label = p;
+			while (p < e && *p != ']' && *p != '\n') p++;
+			if (p < e && *p == ']' && p + 1 < e && p[1] == ':') {
+				int labellen = p - label;
+				p += 2; /* past ]: */
+				while (p < e && (*p == ' ' || *p == '\t')) p++;
+				content = p;
+				cend = eol(line, e);
+				while (cend > content && (cend[-1] == '\n' || cend[-1] == ' '))
+					cend--;
+				if (labellen > 0 && nfootnotes < (int)LEN(footnotes)) {
+					footnotes[nfootnotes].label = label;
+					footnotes[nfootnotes].labellen = labellen;
+					footnotes[nfootnotes].content = content;
+					footnotes[nfootnotes].contentlen = cend - content;
+					footnotes[nfootnotes].used = 0;
+					nfootnotes++;
+				}
+			}
+		}
+		line = eol(line, e);
+	}
+}
+
+static void
+emit_endnotes(void)
+{
+	int i, any = 0;
+
+	for (i = 0; i < nfootnotes; i++)
+		if (footnotes[i].used) { any = 1; break; }
+	if (!any) return;
+
+	fputs("<section role=\"doc-endnotes\">\n<hr>\n<ol>\n", stdout);
+	for (i = 0; i < nfootnotes; i++) {
+		if (!footnotes[i].used) continue;
+		printf("<li id=\"fn%.*s\">\n", footnotes[i].labellen, footnotes[i].label);
+		fputs("<p>", stdout);
+		process(footnotes[i].content,
+		    footnotes[i].content + footnotes[i].contentlen, 0);
+		printf("<a href=\"#fnref%.*s\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>",
+		    footnotes[i].labellen, footnotes[i].label);
+		fputs("</p>\n</li>\n", stdout);
+	}
+	fputs("</ol>\n</section>\n", stdout);
+}
+
 int
 main(void)
 {
@@ -1889,11 +1980,13 @@ main(void)
 	} while (n > 0);
 
 	scan_refs(buf, buf + len);
+	scan_footnotes(buf, buf + len);
 	scan_heading_refs(buf, buf + len);
 	process(buf, buf + len, 1);
 
 	/* close remaining sections */
 	close_sections(0);
+	emit_endnotes();
 
 	free(buf);
 	return 0;
