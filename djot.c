@@ -38,7 +38,11 @@ static Parser parsers[] = {
 };
 
 /* reference link definitions */
-static struct { const char *label; int labellen; const char *url; int urllen; } refs[128];
+static struct {
+	const char *label; int labellen;
+	const char *url; int urllen;
+	char attrs[128]; /* extra attributes like title=foo */
+} refs[128];
 static int nrefs;
 
 /* heading section stack */
@@ -120,11 +124,15 @@ isws(int c)
 
 /* look up a reference definition */
 /* normalize whitespace for comparison: collapse ws to single space */
+/* skip emphasis markers and normalize whitespace for label comparison */
 static int
 label_match(const char *a, int alen, const char *b, int blen)
 {
 	int ai = 0, bi = 0;
 	while (ai < alen && bi < blen) {
+		/* skip emphasis markers */
+		if (a[ai] == '_' || a[ai] == '*') { ai++; continue; }
+		if (b[bi] == '_' || b[bi] == '*') { bi++; continue; }
 		if (isws(a[ai]) && isws(b[bi])) {
 			while (ai < alen && isws(a[ai])) ai++;
 			while (bi < blen && isws(b[bi])) bi++;
@@ -134,9 +142,8 @@ label_match(const char *a, int alen, const char *b, int blen)
 			return 0;
 		}
 	}
-	/* skip trailing ws */
-	while (ai < alen && isws(a[ai])) ai++;
-	while (bi < blen && isws(b[bi])) bi++;
+	while (ai < alen && (isws(a[ai]) || a[ai] == '_' || a[ai] == '*')) ai++;
+	while (bi < blen && (isws(b[bi]) || b[bi] == '_' || b[bi] == '*')) bi++;
 	return ai == alen && bi == blen;
 }
 
@@ -148,7 +155,7 @@ findref(const char *label, int len, const char **url, int *urllen)
 		if (label_match(refs[i].label, refs[i].labellen, label, len)) {
 			*url = refs[i].url;
 			*urllen = refs[i].urllen;
-			return 1;
+			return i + 1; /* return 1-based index */
 		}
 	return 0;
 }
@@ -1358,21 +1365,44 @@ dolink(const char *b, const char *e, int n)
 		const char *label = ref;
 		int labellen = refend - ref;
 		if (labellen == 0) { label = text; labellen = textend - text; }
-		if (findref(label, labellen, &url, &urllen)) {
-			if (img) {
-				fputs("<img alt=\"", stdout);
-				altprint(text, textend);
-				fputs("\" src=\"", stdout);
-				emit_url(url, url + urllen);
-				fputs("\">", stdout);
-			} else {
-				fputs("<a href=\"", stdout);
-				emit_url(url, url + urllen);
-				fputs("\">", stdout);
-				process(text, textend, 0);
-				fputs("</a>", stdout);
+		{
+			int ri = findref(label, labellen, &url, &urllen);
+			if (ri) {
+				/* check for inline {attrs} after ] */
+				const char *rattr = "";
+				char inline_attr[256] = {0};
+				const char *after_ref = q + 1;
+				if (after_ref < e && *after_ref == '{') {
+					const char *ab = after_ref + 1;
+					const char *ae = ab;
+					while (ae < e && *ae != '}' && *ae != '\n') ae++;
+					if (ae < e && *ae == '}') {
+						char aid[1], acls[1];
+						parse_attrs(ab, ae, aid, 1, acls, 1,
+						    inline_attr, sizeof(inline_attr));
+						q = ae; /* consume the {attrs} */
+					}
+				}
+				rattr = inline_attr[0] ? inline_attr : refs[ri-1].attrs;
+				if (img) {
+					fputs("<img alt=\"", stdout);
+					altprint(text, textend);
+					fputs("\" src=\"", stdout);
+					emit_url(url, url + urllen);
+					fputc('"', stdout);
+					if (rattr[0]) printf(" %s", rattr);
+					fputs(">", stdout);
+				} else {
+					fputs("<a href=\"", stdout);
+					emit_url(url, url + urllen);
+					fputc('"', stdout);
+					if (rattr[0]) printf(" %s", rattr);
+					fputs(">", stdout);
+					process(text, textend, 0);
+					fputs("</a>", stdout);
+				}
+				return q + 1 - b;
 			}
-			return q + 1 - b;
 		}
 		/* no matching ref: render as link without href */
 		if (img) {
@@ -1592,6 +1622,23 @@ scan_refs(const char *b, const char *e)
 						refs[nrefs].labellen = labellen;
 						refs[nrefs].url = u;
 						refs[nrefs].urllen = urlbuflen;
+						refs[nrefs].attrs[0] = '\0';
+						/* check for {attrs} on previous line */
+						if (line > b) {
+							const char *prev = line - 1;
+							while (prev > b && prev[-1] != '\n') prev--;
+							const char *pp = prev;
+							while (pp < line && (*pp == ' ' || *pp == '\t')) pp++;
+							if (pp < line && *pp == '{') {
+								const char *pe = pp + 1;
+								while (pe < line && *pe != '}') pe++;
+								if (pe < line) {
+									char aid[1], acls[1];
+									parse_attrs(pp+1, pe, aid, 1, acls, 1,
+									    refs[nrefs].attrs, sizeof(refs[nrefs].attrs));
+								}
+							}
+						}
 						nrefs++;
 					}
 				}
