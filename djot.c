@@ -327,9 +327,9 @@ doblockquote(const char *b, const char *e, int n)
 			p = line;
 			sp = spaces(p, e);
 			p += sp;
-			if (p < e && *p == '>') {
+			if (p < e && *p == '>'
+			    && (p + 1 >= e || p[1] == ' ' || p[1] == '\n')) {
 				p++;
-				if (p < e && *p != ' ' && *p != '\n') break;
 				if (p < e && *p == ' ') p++;
 				q = eol(line, e);
 				int blank = isblankline(p, q);
@@ -385,10 +385,10 @@ docodefence(const char *b, const char *e, int n)
 	infoend = p;
 	while (infoend > info && (infoend[-1] == ' ' || infoend[-1] == '\t'))
 		infoend--;
-	/* backtick fence: info must not contain backticks */
+	/* backtick fence: info must not contain backticks or spaces */
 	if (fch == '`') {
 		for (q = info; q < infoend; q++)
-			if (*q == '`') return 0;
+			if (*q == '`' || *q == ' ') return 0;
 	}
 	if (p < e) p++; /* skip \n */
 
@@ -1424,6 +1424,63 @@ scan_refs(const char *b, const char *e)
 	}
 }
 
+/* pre-scan headings to create implicit reference definitions */
+static void
+scan_heading_refs(const char *b, const char *e)
+{
+	const char *line, *p;
+
+	line = b;
+	while (line < e) {
+		p = line;
+		int sp = spaces(p, e);
+		if (sp <= 3) {
+			p += sp;
+			int lvl = leadc(p, e, '#');
+			if (lvl >= 1 && lvl <= 6 && p + lvl < e
+			    && (p[lvl] == ' ' || p[lvl] == '\n')) {
+				const char *content = p + lvl;
+				if (*content == ' ') content++;
+				const char *cend = eol(line, e);
+				while (cend > content && (cend[-1] == '\n' || cend[-1] == '\r'
+				    || cend[-1] == ' ' || cend[-1] == '\t'))
+					cend--;
+				if (cend > content && nrefs < (int)LEN(refs)
+				    && !findref(content, cend - content, &(const char *){0}, &(int){0})) {
+					/* build #id URL */
+					char idbuf[256];
+					int idn = 0;
+					const char *s;
+					for (s = content; s < cend && idn < (int)sizeof(idbuf) - 2; s++) {
+						if (*s == ' ' || *s == '\t' || *s == '\n')
+							idbuf[idn++] = '-';
+						else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
+							idbuf[idn++] = *s;
+					}
+					while (idn > 0 && idbuf[idn-1] == '-') idn--;
+					{
+						int ss = 0;
+						while (ss < idn && idbuf[ss] == '-') ss++;
+						int ulen = idn - ss + 1;
+						char *u = malloc(ulen + 1);
+						if (u) {
+							u[0] = '#';
+							memcpy(u + 1, idbuf + ss, idn - ss);
+							u[ulen] = '\0';
+							refs[nrefs].label = content;
+							refs[nrefs].labellen = cend - content;
+							refs[nrefs].url = u;
+							refs[nrefs].urllen = ulen;
+							nrefs++;
+						}
+					}
+				}
+			}
+		}
+		line = eol(line, e);
+	}
+}
+
 int
 main(void)
 {
@@ -1441,6 +1498,7 @@ main(void)
 	} while (n > 0);
 
 	scan_refs(buf, buf + len);
+	scan_heading_refs(buf, buf + len);
 	process(buf, buf + len, 1);
 
 	/* close remaining sections */
