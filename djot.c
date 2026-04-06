@@ -43,6 +43,7 @@ static int nrefs;
 /* heading section stack */
 static int sections[6], nsections;
 static int in_container; /* suppress sections inside blockquotes/lists */
+static int tight; /* suppress <p> wrapping in tight list items */
 
 static void
 die(const char *msg)
@@ -657,37 +658,36 @@ dolist(const char *b, const char *e, int n)
 	loose = 0;
 	had_blank = 0;
 	line = b;
+	{
+	int marker_col = sp; /* column where the list marker character starts */
 	while (line < e) {
+		int item_sp, item_mw;
+
 		/* verify this line starts with the same marker type */
+		item_sp = spaces(line, e);
+		p = line + item_sp;
 		{
-			int s2, st2;
+			int st2;
 			char d2, m2;
-			p = line + spaces(line, e);
-			s2 = scan_marker(p, e, &st2, &(int){0}, &d2, &m2);
-			if (!s2) break;
+			item_mw = scan_marker(p, e, &st2, &(int){0}, &d2, &m2);
+			if (!item_mw) break;
 			if (style == 0) { if (st2 != 0 || m2 != mch) break; }
 			else if (d2 != delim) break;
 			else if (st2 != style) {
-				/* allow alpha/roman compatibility */
 				int compat = 0;
 				if ((style == 4 && st2 == 2) || (style == 5 && st2 == 3))
-					compat = 1; /* roman list, alpha marker */
+					compat = 1;
 				if ((style == 2 && st2 == 4) || (style == 3 && st2 == 5))
-					compat = 1; /* alpha list, roman marker */
+					compat = 1;
 				if (!compat) break;
 			}
 		}
+		indent = item_sp + item_mw; /* content column */
+
 		/* collect one item's content */
 		buf = NULL;
 		i = 0;
-		/* first line: skip marker (recalculate indent per item) */
-		{
-			int item_indent;
-			const char *mp = line + spaces(line, e);
-			item_indent = scan_marker(mp, e, &(int){0}, &(int){0},
-			    &(char){0}, &(char){0});
-			indent = item_indent + (mp - line);
-		}
+		/* first line: content after marker */
 		p = line + indent;
 		q = eol(line, e);
 		for (; p < q; p++) { ADDC(buf, i) = *p; i++; }
@@ -703,56 +703,55 @@ dolist(const char *b, const char *e, int n)
 				continue;
 			}
 			sp = spaces(line, e);
-			p = line + sp;
-			/* new item at same level? */
-			if (sp < indent) {
-				/* check if it's a matching marker */
-				{
-					int s2, st2;
+			if (sp > marker_col) {
+				/* indented past marker column: part of this item */
+				int strip = sp;
+				if (strip > indent) strip = indent;
+				q = eol(line, e);
+				for (p = line + strip; p < q; p++) {
+					ADDC(buf, i) = *p;
+					i++;
+				}
+				line = q;
+				continue;
+			}
+			/* at or before marker column */
+			if (sp == marker_col) {
+				/* could be sibling item or end of list */
+				int st2;
+				char d2, m2;
+				if (scan_marker(line + sp, e, &st2, &(int){0}, &d2, &m2)) {
+					if (style == 0 && st2 == 0 && m2 == mch) break;
+					if (style != 0 && d2 == delim &&
+					    (st2 == style ||
+					    (style >= 4 && st2 == style - 2) ||
+					    (style <= 3 && st2 == style + 2)))
+						break;
+				}
+			}
+			/* lazy continuation (no blank, not a list marker at base) */
+			if (!had_blank) {
+				/* check for any list marker at sp==marker_col */
+				if (sp == marker_col) {
+					int st2;
 					char d2, m2;
-					s2 = scan_marker(p, e, &st2, &(int){0}, &d2, &m2);
-					if (s2) {
-						if (style == 0 && st2 == 0 && m2 == mch) break;
-						if (style != 0 && st2 == style && d2 == delim) break;
-					}
+					if (scan_marker(line + sp, e, &st2, &(int){0}, &d2, &m2))
+						break;
 				}
-				/* sub-list after blank? */
-				if (had_blank && sp > 0) {
-					/* indented content: sub-content */
-					q = eol(line, e);
-					for (p = line + sp; p < q; p++) {
+				q = eol(line, e);
+				/* strip up to marker_col+1 spaces for lazy lines */
+				{
+					int strip = sp;
+					if (strip > indent) strip = indent;
+					for (p = line + strip; p < q; p++) {
 						ADDC(buf, i) = *p;
 						i++;
 					}
-					line = q;
-					continue;
 				}
-				/* lazy continuation (no blank, in paragraph) */
-				if (!had_blank) {
-					/* don't lazy-continue if line is any list marker */
-					{
-						int st2;
-						char d2, m2;
-						if (scan_marker(p, e, &st2, &(int){0}, &d2, &m2))
-							break;
-					}
-					q = eol(line, e);
-					for (p = line; p < q; p++) {
-						ADDC(buf, i) = *p;
-						i++;
-					}
-					line = q;
-					continue;
-				}
-				break;
+				line = q;
+				continue;
 			}
-			/* fully indented continuation */
-			q = eol(line, e);
-			for (p = line + indent; p < q; p++) {
-				ADDC(buf, i) = *p;
-				i++;
-			}
-			line = q;
+			break;
 		}
 
 		/* trim trailing blank lines from item */
@@ -761,16 +760,21 @@ dolist(const char *b, const char *e, int n)
 
 		if (had_blank) loose = 1;
 
-		fputs("<li>\n", stdout);
-		if (loose)
+		{
+			int save_tight = tight;
+			int save_cont = in_container;
+			in_container = 1;
+			fputs("<li>\n", stdout);
+			if (!loose) tight = 1;
 			process(buf, buf + i, 1);
-		else
-			process(buf, buf + i, 0);
-		fputc('\n', stdout);
+			tight = save_tight;
+			in_container = save_cont;
+		}
 		fputs("</li>\n", stdout);
 		free(buf);
 		buf = NULL;
 		had_blank = 0;
+	}
 	}
 
 	fputs(style == 0 ? "</ul>\n" : "</ol>\n", stdout);
@@ -794,9 +798,10 @@ doparagraph(const char *b, const char *e, int n)
 	/* trim trailing whitespace */
 	p = end;
 	while (p > b && (p[-1] == '\n' || p[-1] == '\r' || p[-1] == ' ' || p[-1] == '\t')) p--;
-	fputs("<p>", stdout);
+	if (!tight) fputs("<p>", stdout);
 	process(b, p, 0);
-	fputs("</p>\n", stdout);
+	if (!tight) fputs("</p>", stdout);
+	fputc('\n', stdout);
 	return -(end - b);
 }
 
