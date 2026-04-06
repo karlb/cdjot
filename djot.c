@@ -109,12 +109,33 @@ isws(int c)
 }
 
 /* look up a reference definition */
+/* normalize whitespace for comparison: collapse ws to single space */
+static int
+label_match(const char *a, int alen, const char *b, int blen)
+{
+	int ai = 0, bi = 0;
+	while (ai < alen && bi < blen) {
+		if (isws(a[ai]) && isws(b[bi])) {
+			while (ai < alen && isws(a[ai])) ai++;
+			while (bi < blen && isws(b[bi])) bi++;
+		} else if (a[ai] == b[bi]) {
+			ai++; bi++;
+		} else {
+			return 0;
+		}
+	}
+	/* skip trailing ws */
+	while (ai < alen && isws(a[ai])) ai++;
+	while (bi < blen && isws(b[bi])) bi++;
+	return ai == alen && bi == blen;
+}
+
 static int
 findref(const char *label, int len, const char **url, int *urllen)
 {
 	int i;
 	for (i = 0; i < nrefs; i++)
-		if (refs[i].labellen == len && !memcmp(refs[i].label, label, len)) {
+		if (label_match(refs[i].label, refs[i].labellen, label, len)) {
 			*url = refs[i].url;
 			*urllen = refs[i].urllen;
 			return 1;
@@ -1179,7 +1200,7 @@ dolink(const char *b, const char *e, int n)
 		if (findref(label, labellen, &url, &urllen)) {
 			if (img) {
 				fputs("<img alt=\"", stdout);
-				hprint(text, textend);
+				altprint(text, textend);
 				fputs("\" src=\"", stdout);
 				emit_url(url, url + urllen);
 				fputs("\">", stdout);
@@ -1192,6 +1213,17 @@ dolink(const char *b, const char *e, int n)
 			}
 			return q + 1 - b;
 		}
+		/* no matching ref: render as link without href */
+		if (img) {
+			fputs("<img alt=\"", stdout);
+			altprint(text, textend);
+			fputs("\">", stdout);
+		} else {
+			fputs("<a>", stdout);
+			process(text, textend, 0);
+			fputs("</a>", stdout);
+		}
+		return q + 1 - b;
 	}
 	return 0;
 }
