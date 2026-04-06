@@ -1197,6 +1197,9 @@ dosurround(const char *b, const char *e, int n)
 			if (q >= e) break;
 			continue;
 		}
+		/* stop at ]( — emphasis shouldn't span across link syntax */
+		if (*p == ']' && p + 1 < e && p[1] == '(')
+			break;
 		if (*p == '<') { /* skip autolinks */
 			const char *q = p + 1;
 			while (q < e && *q != '>' && *q != '<' && *q != '\n') q++;
@@ -1220,7 +1223,16 @@ dosurround(const char *b, const char *e, int n)
 				q++;
 			}
 			if (q < e && *q == '(' && has_delim) {
-				/* delimiter is in text part — don't skip, let it match */
+				/* check if link completes — if not, stop scanning */
+				int d2 = 1;
+				const char *q2 = q + 1;
+				while (q2 < e && d2 > 0) {
+					if (*q2 == '(') d2++;
+					if (*q2 == ')') d2--;
+					q2++;
+				}
+				if (d2 != 0) break; /* incomplete link: stop emphasis scan */
+				/* complete link with delim in text: don't skip */
 			} else if (q < e && *q == '(' && !has_delim) {
 				/* skip the url part only */
 				depth = 1; q++;
