@@ -14,6 +14,7 @@
 typedef int (*Parser)(const char *, const char *, int);
 
 /* forward declarations */
+static int doattr(const char *b, const char *e, int n);
 static int dorefdef(const char *b, const char *e, int n);
 static int doheading(const char *b, const char *e, int n);
 static int doblockquote(const char *b, const char *e, int n);
@@ -31,7 +32,7 @@ static void process(const char *b, const char *e, int newblock);
 static void hprint(const char *b, const char *e);
 
 static Parser parsers[] = {
-	dorefdef, doheading, doblockquote, docodefence, dothematicbreak,
+	doattr, dorefdef, doheading, doblockquote, docodefence, dothematicbreak,
 	dolist, doparagraph,
 	dolinebreak, docode, dosurround, dolink, doautolink, doreplace,
 };
@@ -44,6 +45,15 @@ static int nrefs;
 static int sections[6], nsections;
 static int in_container; /* suppress sections inside blockquotes/lists */
 static int tight; /* suppress <p> wrapping in tight list items */
+
+/* pending block attributes */
+static char pending_id[128];
+static char pending_class[128];
+static char pending_attrs[256]; /* raw key=val pairs */
+
+/* used heading IDs for dedup */
+static char *used_ids[256];
+static int nused_ids;
 
 static void
 die(const char *msg)
@@ -143,29 +153,6 @@ findref(const char *label, int len, const char **url, int *urllen)
 	return 0;
 }
 
-/* emit heading id: keep alnum/-/_, space/newline -> '-' */
-static void
-heading_id(const char *b, const char *e)
-{
-	char idbuf[256];
-	int n = 0;
-
-	while (b < e && isws(*b)) b++;
-	while (e > b && isws(e[-1])) e--;
-	for (; b < e && n < (int)sizeof(idbuf) - 1; b++) {
-		if (*b == ' ' || *b == '\t' || *b == '\n')
-			idbuf[n++] = '-';
-		else if (isalnum((unsigned char)*b) || *b == '-' || *b == '_')
-			idbuf[n++] = *b;
-	}
-	/* trim leading/trailing '-' */
-	while (n > 0 && idbuf[n-1] == '-') n--;
-	{
-		int s = 0;
-		while (s < n && idbuf[s] == '-') s++;
-		fwrite(idbuf + s, 1, n - s, stdout);
-	}
-}
 
 static void
 close_sections(int level)
@@ -174,6 +161,141 @@ close_sections(int level)
 		fputs("</section>\n", stdout);
 		nsections--;
 	}
+}
+
+/* --- attribute parsing --- */
+
+/* parse attributes from {#id .class key=val ...}, write to buffers */
+static int
+parse_attrs(const char *b, const char *e, char *id, int idsz,
+    char *cls, int clssz, char *extra, int exsz)
+{
+	const char *p = b;
+	int idn = 0, cn = 0, en = 0;
+
+	if (id) id[0] = '\0';
+	if (cls) cls[0] = '\0';
+	if (extra) extra[0] = '\0';
+
+	while (p < e) {
+		while (p < e && (*p == ' ' || *p == '\t')) p++;
+		if (p >= e) break;
+		if (*p == '#') {
+			/* id */
+			p++;
+			while (p < e && *p != ' ' && *p != '}' && idn < idsz - 1)
+				id[idn++] = *p++;
+			id[idn] = '\0';
+		} else if (*p == '.') {
+			/* class */
+			p++;
+			if (cn > 0 && cn < clssz - 1) cls[cn++] = ' ';
+			while (p < e && *p != ' ' && *p != '}' && cn < clssz - 1)
+				cls[cn++] = *p++;
+			cls[cn] = '\0';
+		} else if (isalpha((unsigned char)*p)) {
+			/* key=val */
+			if (en > 0 && en < exsz - 1) extra[en++] = ' ';
+			while (p < e && *p != '=' && *p != ' ' && *p != '}' && en < exsz - 1)
+				extra[en++] = *p++;
+			if (p < e && *p == '=') {
+				extra[en++] = '=';
+				p++;
+				if (p < e && *p == '"') {
+					extra[en++] = '"';
+					p++;
+					while (p < e && *p != '"' && en < exsz - 1)
+						extra[en++] = *p++;
+					if (p < e) { extra[en++] = '"'; p++; }
+				} else {
+					while (p < e && *p != ' ' && *p != '}' && en < exsz - 1)
+						extra[en++] = *p++;
+				}
+			}
+			extra[en] = '\0';
+		} else {
+			p++;
+		}
+	}
+	return idn > 0 || cn > 0 || en > 0;
+}
+
+/* emit stored attributes as HTML attributes */
+static void
+emit_attrs(const char *id, const char *cls, const char *extra)
+{
+	if (id && id[0]) printf(" id=\"%s\"", id);
+	if (cls && cls[0]) printf(" class=\"%s\"", cls);
+	if (extra && extra[0]) printf(" %s", extra);
+}
+
+/* deduplicate an ID: append -1, -2, etc. if already used */
+static void
+dedup_id(char *id, int sz)
+{
+	int i, n;
+	char buf[256];
+
+	for (i = 0; i < nused_ids; i++)
+		if (strcmp(used_ids[i], id) == 0)
+			goto dup;
+	/* not a dup — record it */
+	if (nused_ids < (int)LEN(used_ids))
+		used_ids[nused_ids++] = strcpy(malloc(strlen(id)+1), id);
+	return;
+dup:
+	for (n = 1; n < 100; n++) {
+		snprintf(buf, sizeof(buf), "%s-%d", id, n);
+		for (i = 0; i < nused_ids; i++)
+			if (strcmp(used_ids[i], buf) == 0)
+				goto next;
+		/* found unique */
+		snprintf(id, sz, "%s", buf);
+		if (nused_ids < (int)LEN(used_ids))
+			used_ids[nused_ids++] = strcpy(malloc(strlen(id)+1), id);
+		return;
+	next:;
+	}
+}
+
+static void
+clear_pending(void)
+{
+	pending_id[0] = '\0';
+	pending_class[0] = '\0';
+	pending_attrs[0] = '\0';
+}
+
+static int
+has_pending(void)
+{
+	return pending_id[0] || pending_class[0] || pending_attrs[0];
+}
+
+/* block-level attribute line: {#id .class ...} */
+static int
+doattr(const char *b, const char *e, int n)
+{
+	const char *p, *q;
+
+	if (!n) return 0;
+	p = b;
+	while (p < e && (*p == ' ' || *p == '\t')) p++;
+	if (p >= e || *p != '{') return 0;
+	/* find matching } on same line */
+	q = p + 1;
+	while (q < e && *q != '}' && *q != '\n') q++;
+	if (q >= e || *q != '}') return 0;
+	/* rest of line must be blank */
+	{
+		const char *r = q + 1;
+		while (r < e && (*r == ' ' || *r == '\t')) r++;
+		if (r < e && *r != '\n') return 0;
+	}
+	parse_attrs(p + 1, q, pending_id, sizeof(pending_id),
+	    pending_class, sizeof(pending_class),
+	    pending_attrs, sizeof(pending_attrs));
+	return -(eol(b, e) - b);
 }
 
 /* --- block parsers --- */
@@ -277,24 +399,50 @@ doheading(const char *b, const char *e, int n)
 		blen--;
 	ADDC(buf, blen) = '\0';
 
-	if (!in_container) {
-		close_sections(level);
-		fputs("<section id=\"", stdout);
-		if (blen > 0)
-			heading_id(buf, buf + blen);
-		else
-			printf("s-%d", nsections + 1);
-		fputs("\">\n", stdout);
-		if (nsections < 6) sections[nsections++] = level;
-	}
+	/* compute heading id */
+	{
+		char hid[256];
+		if (pending_id[0]) {
+			snprintf(hid, sizeof(hid), "%s", pending_id);
+		} else if (blen > 0) {
+			/* generate id into buffer */
+			int hi = 0;
+			const char *s = buf, *se = buf + blen;
+			while (s < se && isws(*s)) s++;
+			while (se > s && isws(se[-1])) se--;
+			for (; s < se && hi < (int)sizeof(hid) - 1; s++) {
+				if (*s == ' ' || *s == '\t' || *s == '\n') {
+					if (hi == 0 || hid[hi-1] != '-')
+						hid[hi++] = '-';
+				} else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
+					hid[hi++] = *s;
+			}
+			while (hi > 0 && hid[hi-1] == '-') hi--;
+			{
+				int ss = 0;
+				while (ss < hi && hid[ss] == '-') ss++;
+				memmove(hid, hid + ss, hi - ss);
+				hi -= ss;
+			}
+			hid[hi] = '\0';
+		} else {
+			snprintf(hid, sizeof(hid), "s-%d", nsections + 1);
+		}
+		dedup_id(hid, sizeof(hid));
 
-	printf("<h%d", level);
-	if (in_container) {
-		fputs(" id=\"", stdout);
-		if (blen > 0) heading_id(buf, buf + blen);
-		fputc('"', stdout);
+		if (!in_container) {
+			close_sections(level);
+			printf("<section id=\"%s\">\n", hid);
+			if (nsections < 6) sections[nsections++] = level;
+		}
+		printf("<h%d", level);
+		if (in_container)
+			printf(" id=\"%s\"", hid);
+		if (pending_class[0])
+			printf(" class=\"%s\"", pending_class);
+		fputc('>', stdout);
+		clear_pending();
 	}
-	fputc('>', stdout);
 	process(buf, buf + blen, 0);
 	printf("</h%d>\n", level);
 	free(buf);
@@ -873,7 +1021,16 @@ doparagraph(const char *b, const char *e, int n)
 	while (b < end && (*b == ' ' || *b == '\t')) b++;
 	p = end;
 	while (p > b && (p[-1] == '\n' || p[-1] == '\r' || p[-1] == ' ' || p[-1] == '\t')) p--;
-	if (!tight) fputs("<p>", stdout);
+	if (!tight) {
+		fputs("<p", stdout);
+		if (has_pending()) {
+			if (pending_id[0])
+				dedup_id(pending_id, sizeof(pending_id));
+			emit_attrs(pending_id, pending_class, pending_attrs);
+		}
+		clear_pending();
+		fputc('>', stdout);
+	}
 	process(b, p, 0);
 	if (!tight) fputs("</p>", stdout);
 	fputc('\n', stdout);
@@ -1229,6 +1386,23 @@ dolink(const char *b, const char *e, int n)
 		}
 		return q + 1 - b;
 	}
+	/* span syntax [text]{.class #id ...} */
+	if (q < e && *q == '{') {
+		const char *ab = q + 1;
+		const char *ae = ab;
+		while (ae < e && *ae != '}' && *ae != '\n') ae++;
+		if (ae < e && *ae == '}') {
+			char sid[128], scls[128], sextra[256];
+			parse_attrs(ab, ae, sid, sizeof(sid),
+			    scls, sizeof(scls), sextra, sizeof(sextra));
+			fputs("<span", stdout);
+			emit_attrs(sid, scls, sextra);
+			fputc('>', stdout);
+			process(text, textend, 0);
+			fputs("</span>", stdout);
+			return ae + 1 - b;
+		}
+	}
 	return 0;
 }
 
@@ -1450,20 +1624,42 @@ scan_heading_refs(const char *b, const char *e)
 					cend--;
 				if (cend > content && nrefs < (int)LEN(refs)
 				    && !findref(content, cend - content, &(const char *){0}, &(int){0})) {
+					/* check for {#id} on previous line */
+					char custom_id[128] = {0};
+					if (line > b) {
+						const char *prev = line - 1;
+						while (prev > b && prev[-1] != '\n') prev--;
+						const char *pp = prev;
+						while (pp < line && (*pp == ' ' || *pp == '\t')) pp++;
+						if (pp < line && *pp == '{') {
+							const char *pe = pp + 1;
+							while (pe < line && *pe != '}') pe++;
+							if (pe < line && *pe == '}')
+								parse_attrs(pp + 1, pe, custom_id, sizeof(custom_id),
+								    &(char){0}, 1, &(char){0}, 1);
+						}
+					}
 					/* build #id URL */
 					char idbuf[256];
 					int idn = 0;
-					const char *s;
-					for (s = content; s < cend && idn < (int)sizeof(idbuf) - 2; s++) {
-						if (*s == ' ' || *s == '\t' || *s == '\n')
-							idbuf[idn++] = '-';
-						else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
-							idbuf[idn++] = *s;
+					if (custom_id[0]) {
+						idn = strlen(custom_id);
+						if (idn > (int)sizeof(idbuf) - 2) idn = sizeof(idbuf) - 2;
+						memcpy(idbuf, custom_id, idn);
+					} else {
+						const char *s;
+						for (s = content; s < cend && idn < (int)sizeof(idbuf) - 2; s++) {
+							if (*s == ' ' || *s == '\t' || *s == '\n')
+								idbuf[idn++] = '-';
+							else if (isalnum((unsigned char)*s) || *s == '-' || *s == '_')
+								idbuf[idn++] = *s;
+						}
+						while (idn > 0 && idbuf[idn-1] == '-') idn--;
 					}
-					while (idn > 0 && idbuf[idn-1] == '-') idn--;
 					{
 						int ss = 0;
-						while (ss < idn && idbuf[ss] == '-') ss++;
+						if (!custom_id[0])
+							while (ss < idn && idbuf[ss] == '-') ss++;
 						int ulen = idn - ss + 1;
 						char *u = malloc(ulen + 1);
 						if (u) {
