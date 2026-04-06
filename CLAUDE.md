@@ -38,5 +38,5 @@ Key design decisions:
 ## Goals
 
 - Simplicity: single file, no deps, suckless-influenced style
-- Correctness: 251/256 official djot.js tests passing (3 AST-format tests removed; symb.test, filters.test, sourcepos.test omitted; 5 remaining failures are attribute edge cases)
+- Correctness: 255/256 official djot.js tests passing (symb.test, filters.test, sourcepos.test omitted as N/A; 3 AST-format test blocks removed; 1 remaining failure is attribute declaration order across multiple blocks)
 - The test suite in `test/` uses files from `jgm/djot.js`. Format: backtick-fenced blocks with `.` separating input from expected HTML
