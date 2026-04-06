@@ -1573,6 +1573,21 @@ doreplace(const char *b, const char *e, int n)
 		return 1;
 	}
 
+	/* spaces before hard break: consume "ws \ ws newline" as <br> */
+	if ((*b == ' ' || *b == '\t') && !n) {
+		const char *q = b;
+		while (q < e && (*q == ' ' || *q == '\t')) q++;
+		if (q < e && *q == '\\') {
+			const char *r = q + 1;
+			while (r < e && (*r == ' ' || *r == '\t')) r++;
+			if (r < e && (*r == '\n' || *r == '\r')) {
+				if (*r == '\r' && r + 1 < e && r[1] == '\n') r++;
+				fputs("<br>\n", stdout);
+				return r + 1 - b;
+			}
+		}
+	}
+
 	/* HTML escapes */
 	if (*b == '&') { fputs("&amp;", stdout); return 1; }
 	if (*b == '<') { fputs("&lt;", stdout); return 1; }
