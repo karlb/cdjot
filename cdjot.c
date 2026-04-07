@@ -84,7 +84,8 @@ static int cap_pcls;
 static char *pending_attrs;
 static int cap_pattr;
 
-static struct { char *key; int count; } *id_ht; /* heading ID hash table */
+struct id_entry { char *key; int count; };
+static struct id_entry *id_ht; /* heading ID hash table */
 static int id_ht_sz, id_ht_cnt;
 
 static void
@@ -428,7 +429,7 @@ id_intern(const char *s)
 	/* grow at 50% load */
 	if (id_ht_cnt * 2 >= id_ht_sz) {
 		int oldsz = id_ht_sz, j;
-		__typeof__(id_ht) old = id_ht;
+		struct id_entry *old = id_ht;
 		id_ht_sz = oldsz ? oldsz * 2 : 64;
 		id_ht = calloc(id_ht_sz, sizeof(*id_ht));
 		if (!id_ht) die("malloc");
@@ -449,7 +450,11 @@ id_intern(const char *s)
 		if (strcmp(id_ht[i].key, s) == 0) return i;
 		i = (i + 1) & (id_ht_sz - 1);
 	}
-	id_ht[i].key = strcpy(malloc(strlen(s) + 1), s);
+	{
+		char *k = malloc(strlen(s) + 1);
+		if (!k) die("malloc");
+		id_ht[i].key = strcpy(k, s);
+	}
 	id_ht[i].count = 0;
 	id_ht_cnt++;
 	return i;
@@ -2955,7 +2960,7 @@ readall(FILE *f, int *outlen)
 	int len = 0, cap = 0, n;
 
 	do {
-		cap += BUFSIZ;
+		cap = cap ? cap * 2 : BUFSIZ;
 		buf = realloc(buf, cap);
 		if (!buf) die("malloc");
 		n = fread(buf + len, 1, cap - len, f);
