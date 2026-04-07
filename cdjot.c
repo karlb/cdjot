@@ -369,8 +369,10 @@ dedup_id(char *id, int sz)
 		if (strcmp(used_ids[i], id) == 0)
 			goto dup;
 	/* not a dup — record it */
-	if (nused_ids < (int)LEN(used_ids))
-		used_ids[nused_ids++] = strcpy(malloc(strlen(id)+1), id);
+	if (nused_ids < (int)LEN(used_ids)) {
+		char *s = malloc(strlen(id)+1);
+		if (s) used_ids[nused_ids++] = strcpy(s, id);
+	}
 	return;
 dup:
 	for (n = 1; n < 100; n++) {
@@ -380,8 +382,10 @@ dup:
 				goto next;
 		/* found unique */
 		snprintf(id, sz, "%s", buf);
-		if (nused_ids < (int)LEN(used_ids))
-			used_ids[nused_ids++] = strcpy(malloc(strlen(id)+1), id);
+		if (nused_ids < (int)LEN(used_ids)) {
+			char *s = malloc(strlen(id)+1);
+			if (s) used_ids[nused_ids++] = strcpy(s, id);
+		}
 		return;
 	next:;
 	}
