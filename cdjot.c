@@ -46,11 +46,12 @@ static Parser parsers[] = {
 	dolinebreak, docode, dosurround, dolink, doautolink, doreplace,
 };
 
+/* Fixed-size limits — silently truncated if exceeded */
 static struct {
 	const char *label; int labellen;
 	const char *url; int urllen;
 	char attrs[128];
-} refs[128];
+} refs[128];                    /* max reference definitions */
 static int nrefs;
 
 static struct {
@@ -58,7 +59,7 @@ static struct {
 	char *content; int contentlen;
 	int used;
 	int num; /* sequential number assigned on first reference */
-} footnotes[64];
+} footnotes[64];                /* max footnote definitions */
 static int nfootnotes;
 static int footnote_counter;
 
@@ -67,11 +68,11 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
-static char pending_id[128];
-static char pending_class[128];
-static char pending_attrs[256];
+static char pending_id[128];   /* max id length */
+static char pending_class[128];/* max combined class length */
+static char pending_attrs[256];/* max key=val attributes length */
 
-static char *used_ids[256];
+static char *used_ids[256];    /* max unique heading ids */
 static int nused_ids;
 
 static void
