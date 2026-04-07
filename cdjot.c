@@ -2601,8 +2601,9 @@ prescan(const char *b, const char *e)
 	const char *p, *line, *label;
 	int labellen, sp;
 	/* deferred heading refs: added only if no explicit ref exists */
-	struct { const char *content; int len; const char *line; } hdefs[128];
-	int nhdefs = 0;
+	struct hdef { const char *content; int len; const char *line; };
+	struct hdef *hdefs = NULL;
+	int nhdefs = 0, cap_hdefs = 0;
 
 	line = b;
 	while (line < e) {
@@ -2733,7 +2734,8 @@ prescan(const char *b, const char *e)
 				const char *content = p + lvl;
 				if (*content == ' ') content++;
 				const char *cend = trim_end(content, eol(line, e));
-				if (cend > content && nhdefs < (int)LEN(hdefs)) {
+				if (cend > content) {
+					GROWA(hdefs, nhdefs, cap_hdefs);
 					hdefs[nhdefs].content = content;
 					hdefs[nhdefs].len = cend - content;
 					hdefs[nhdefs].line = line;
@@ -2787,6 +2789,7 @@ prescan(const char *b, const char *e)
 			free(custom_id);
 		}
 	}
+	free(hdefs);
 }
 
 static void
