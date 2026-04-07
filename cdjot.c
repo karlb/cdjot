@@ -1696,7 +1696,12 @@ doparagraph(const char *b, const char *e, int n)
 	while (b < end && (*b == ' ' || *b == '\t')) b++;
 	p = trim_end(b, end);
 
-	/* pre-process: transform word{attrs} into [word]{attrs} */
+	/* Pre-process: transform word{attrs} into [word]{attrs} so that
+	 * dolink's span syntax [text]{attrs} handles inline attributes.
+	 * Scans for {…} blocks preceded by a word, inserts [ before the word
+	 * and ] before the {. Skips code spans, escapes, and known {X openers
+	 * (emphasis/quotes). The transformed buffer is only used if changes
+	 * were made; otherwise the original range is processed directly. */
 	{
 		int ncap = (p - b) + 64;
 		char *nbuf = malloc(ncap);
