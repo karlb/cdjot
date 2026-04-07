@@ -278,8 +278,6 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 									en += 6;
 								}
 								p++;
-							} else if (*p == '*') {
-								extra[en++] = *p++;
 							} else {
 								extra[en++] = *p++;
 							}
@@ -864,8 +862,8 @@ doattr(const char *b, const char *e, int n)
 			snprintf(pending_id, sizeof(pending_id), "%s", tid);
 		if (tcls[0]) {
 			if (pending_class[0]) {
-				int n = strlen(pending_class);
-				snprintf(pending_class + n, sizeof(pending_class) - n,
+				int cn = strlen(pending_class);
+				snprintf(pending_class + cn, sizeof(pending_class) - cn,
 				    " %s", tcls);
 			} else {
 				snprintf(pending_class, sizeof(pending_class), "%s", tcls);
@@ -2368,14 +2366,9 @@ doautolink(const char *b, const char *e, int n)
 	return p + 1 - b;
 }
 
-static const char *smartreplace[][2] = {
-	{ "...",  "\xe2\x80\xa6" },
-};
-
 static int
 doreplace(const char *b, const char *e, int n)
 {
-	unsigned int i, l;
 	int run, em, en;
 	char before, after;
 	int can_open, can_close;
@@ -2409,12 +2402,9 @@ doreplace(const char *b, const char *e, int n)
 		return run;
 	}
 
-	for (i = 0; i < LEN(smartreplace); i++) {
-		l = strlen(smartreplace[i][0]);
-		if ((int)(e - b) >= (int)l && !strncmp(b, smartreplace[i][0], l)) {
-			fputs(smartreplace[i][1], stdout);
-			return l;
-		}
+	if (e - b >= 3 && !strncmp(b, "...", 3)) {
+		fputs("\xe2\x80\xa6", stdout);
+		return 3;
 	}
 
 	/* explicit quote markers: {' → left, '} → right */
@@ -2848,6 +2838,8 @@ main(void)
 	free(buf);
 	for (n = 0; n < nrefs; n++)
 		free((char *)refs[n].url);
+	for (n = 0; n < nfootnotes; n++)
+		free(footnotes[n].content);
 	for (n = 0; n < nused_ids; n++)
 		free(used_ids[n]);
 	return 0;
