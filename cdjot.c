@@ -421,7 +421,7 @@ dedup_id(char *id, int sz)
 	}
 	return;
 dup:
-	for (n = 1; n < 100; n++) {
+	for (n = 1; ; n++) {
 		snprintf(buf, sizeof(buf), "%s-%d", id, n);
 		for (i = 0; i < nused_ids; i++)
 			if (strcmp(used_ids[i], buf) == 0)
