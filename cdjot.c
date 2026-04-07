@@ -490,7 +490,7 @@ next_pipe(const char *p, const char *e)
 
 /* check if a line is a separator row (e.g. |:--|---:|) */
 static int
-is_sep_row(const char *b, const char *e, int *aligns, int *ncols)
+is_sep_row(const char *b, const char *e, int **aligns, int *cap_al, int *ncols)
 {
 	const char *p = b;
 	int n = 0;
@@ -504,8 +504,8 @@ is_sep_row(const char *b, const char *e, int *aligns, int *ncols)
 		while (p < e && *p == '-') p++;
 		if (p < e && *p == ':') { right = 1; p++; }
 		while (p < e && *p == ' ') p++;
-		if (n < 64)
-			aligns[n] = left && right ? 3 : left ? 1 : right ? 2 : 0;
+		GROWA(*aligns, n, *cap_al);
+		(*aligns)[n] = left && right ? 3 : left ? 1 : right ? 2 : 0;
 		n++;
 		if (p < e && *p == '|') p++;
 		else break;
@@ -532,7 +532,7 @@ static int
 dotable(const char *b, const char *e, int n)
 {
 	const char *p, *line, *cap;
-	int aligns[64] = {0}, naligns = 0;
+	int *aligns = NULL, naligns = 0, cap_al = 0;
 	int is_header = 0;
 
 	if (!n) return 0;
@@ -587,9 +587,8 @@ dotable(const char *b, const char *e, int n)
 
 		/* check if this line is a separator row */
 		{
-			int sep_aligns[64], sep_ncols;
-			if (is_sep_row(p, eol(p, e), sep_aligns, &sep_ncols)) {
-				memcpy(aligns, sep_aligns, sizeof(int) * (sep_ncols < 64 ? sep_ncols : 64));
+			int sep_ncols;
+			if (is_sep_row(p, eol(p, e), &aligns, &cap_al, &sep_ncols)) {
 				naligns = sep_ncols;
 				is_header = 0;
 				line = eol(line, e);
@@ -604,10 +603,9 @@ dotable(const char *b, const char *e, int n)
 			if (nextl < e) {
 				const char *np = nextl;
 				while (np < e && *np == ' ') np++;
-				int sa[64], sn;
-				if (np < e && *np == '|' && is_sep_row(np, eol(np, e), sa, &sn)) {
+				int sn;
+				if (np < e && *np == '|' && is_sep_row(np, eol(np, e), &aligns, &cap_al, &sn)) {
 					is_header = 1;
-					memcpy(aligns, sa, sizeof(int) * (sn < 64 ? sn : 64));
 					naligns = sn;
 				}
 			}
@@ -660,6 +658,7 @@ dotable(const char *b, const char *e, int n)
 	if (cap > line) line = cap;
 
 	fputs("</table>\n", output);
+	free(aligns);
 	return -(line - b);
 }
 
