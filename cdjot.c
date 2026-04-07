@@ -1292,8 +1292,10 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 		if (isdigit((unsigned char)*p)) {
 			num = 0;
 			const char *r = p;
-			while (r < q && isdigit((unsigned char)*r))
+			while (r < q && isdigit((unsigned char)*r)) {
+				if (num > 99999999) return 0;
 				num = num * 10 + (*r++ - '0');
+			}
 			if (r == q) {
 				*style = 1; *start = num; *delim = '(';
 				q += 2; /* past ) and space */
@@ -1326,8 +1328,10 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 	/* decimal: N. or N) */
 	if (isdigit((unsigned char)*p)) {
 		num = 0;
-		while (p < e && isdigit((unsigned char)*p))
+		while (p < e && isdigit((unsigned char)*p)) {
+			if (num > 99999999) return 0;
 			num = num * 10 + (*p++ - '0');
+		}
 		if (p >= e || (*p != '.' && *p != ')')) return 0;
 		*delim = *p++;
 		if (p >= e || (*p != ' ' && *p != '\n')) return 0;
