@@ -231,6 +231,16 @@ findref(const char *label, int len, const char **url, int *urllen)
 	return 0;
 }
 
+static int
+findref_range(const char *label, int len, int lo, int hi)
+{
+	int i;
+	for (i = lo; i < hi; i++)
+		if (label_match(refs[i].label, refs[i].labellen, label, len))
+			return 1;
+	return 0;
+}
+
 
 static int
 make_slug(const char *b, int len, char *out, int outsz)
@@ -2749,7 +2759,11 @@ prescan(const char *b, const char *e)
 	/* register heading auto-refs; explicit refs shadow these at lookup */
 	{
 		int hi;
+		int href_start = nrefs;
 		for (hi = 0; hi < nhdefs; hi++) {
+			if (findref_range(hdefs[hi].content, hdefs[hi].len,
+			    href_start, nrefs))
+				continue;
 			char *custom_id = NULL;
 			prev_line_attrs(hdefs[hi].line, b,
 			    &custom_id, NULL, NULL);
