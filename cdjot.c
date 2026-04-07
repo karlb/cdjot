@@ -2575,15 +2575,17 @@ process(const char *b, const char *e, int newblock)
 	proc_base = save_base;
 }
 
-static char urlbuf[4096];
-static int urlbuflen;
+static char *urlbuf;
+static int urlbuflen, cap_url;
 
 static void
 urlbuf_add(const char *b, const char *e)
 {
-	while (b < e && urlbuflen < (int)sizeof(urlbuf) - 1) {
-		if (*b != '\n' && *b != '\r' && *b != ' ' && *b != '\t')
+	while (b < e) {
+		if (*b != '\n' && *b != '\r' && *b != ' ' && *b != '\t') {
+			GROWBUF(urlbuf, urlbuflen, cap_url, 1);
 			urlbuf[urlbuflen++] = *b;
+		}
 		b++;
 	}
 }
@@ -2889,6 +2891,7 @@ cdjot_convert(FILE *out, const char *buf, int len)
 	tight = 0;
 	proc_base = NULL;
 	used_ids = NULL; nused_ids = 0; cap_ids = 0;
+	urlbuf = NULL; urlbuflen = 0; cap_url = 0;
 
 	cap_pid = cap_pcls = cap_pattr = 16;
 	pending_id = malloc(cap_pid);
@@ -2914,11 +2917,13 @@ cdjot_convert(FILE *out, const char *buf, int len)
 	for (i = 0; i < nused_ids; i++)
 		free(used_ids[i]);
 	free(used_ids);
+	free(urlbuf);
 	free(pending_id);
 	free(pending_class);
 	free(pending_attrs);
 
 	refs = NULL; footnotes = NULL; used_ids = NULL;
+	urlbuf = NULL;
 	pending_id = pending_class = pending_attrs = NULL;
 	output = NULL;
 
