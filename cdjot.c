@@ -55,7 +55,7 @@ static struct {
 	const char *url; int urllen;
 	char attrs[128];
 } *refs;
-static int nrefs, caprefs;
+static int nrefs, cap_refs;
 
 static struct {
 	const char *label; int labellen;
@@ -63,7 +63,7 @@ static struct {
 	int used;
 	int num; /* sequential number assigned on first reference */
 } *footnotes;
-static int nfootnotes, capfn;
+static int nfootnotes, cap_fn;
 static int footnote_counter;
 
 static int sections[6], nsections;
@@ -79,7 +79,7 @@ static char *pending_attrs;
 static int cap_pattr;
 
 static char **used_ids;
-static int nused_ids, capids;
+static int nused_ids, cap_ids;
 
 static void
 die(const char *msg)
@@ -407,7 +407,7 @@ dedup_id(char *id, int sz)
 		if (strcmp(used_ids[i], id) == 0)
 			goto dup;
 	/* not a dup — record it */
-	GROWA(used_ids, nused_ids, capids);
+	GROWA(used_ids, nused_ids, cap_ids);
 	{
 		char *s = malloc(strlen(id)+1);
 		if (s)
@@ -422,7 +422,7 @@ dup:
 				goto next;
 		/* found unique */
 		snprintf(id, sz, "%s", buf);
-		GROWA(used_ids, nused_ids, capids);
+		GROWA(used_ids, nused_ids, cap_ids);
 		{
 			char *s = malloc(strlen(id)+1);
 			if (s)
@@ -2248,7 +2248,7 @@ dolink(const char *b, const char *e, int n)
 			}
 			/* if not found, create an empty footnote entry */
 			if (found < 0) {
-				GROWA(footnotes, nfootnotes, capfn);
+				GROWA(footnotes, nfootnotes, cap_fn);
 				found = nfootnotes;
 				footnotes[found].label = fl;
 				footnotes[found].labellen = fe - fl;
@@ -2643,7 +2643,7 @@ prescan(const char *b, const char *e)
 				while (fni > 0 && fnbuf[fni-1] == '\n') fni--;
 				ADDC(fnbuf, fni) = '\0';
 				if (ll > 0) {
-					GROWA(footnotes, nfootnotes, capfn);
+					GROWA(footnotes, nfootnotes, cap_fn);
 					footnotes[nfootnotes].label = fl;
 					footnotes[nfootnotes].labellen = ll;
 					footnotes[nfootnotes].content = fnbuf;
@@ -2685,7 +2685,7 @@ prescan(const char *b, const char *e)
 						nextline = le;
 					}
 					if (labellen > 0) {
-						GROWA(refs, nrefs, caprefs);
+						GROWA(refs, nrefs, cap_refs);
 						char *u = malloc(urlbuflen + 1);
 						if (u) {
 							memcpy(u, urlbuf, urlbuflen);
@@ -2757,7 +2757,7 @@ prescan(const char *b, const char *e)
 					u[0] = '#';
 					memcpy(u + 1, idbuf, idn);
 					u[ulen] = '\0';
-					GROWA(refs, nrefs, caprefs);
+					GROWA(refs, nrefs, cap_refs);
 					refs[nrefs].label = hdefs[hi].content;
 					refs[nrefs].labellen = hdefs[hi].len;
 					refs[nrefs].url = u;
