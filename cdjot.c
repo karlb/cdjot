@@ -1359,6 +1359,30 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 	return 0;
 }
 
+/* check if item content has a blank line between non-list text blocks */
+static int
+item_has_inner_blank(const char *buf, int len)
+{
+	const char *be = buf + len;
+	const char *sp2;
+	for (sp2 = buf; sp2 < be; ) {
+		const char *le = eol(sp2, be);
+		if (isblankline(sp2, le)) {
+			const char *after = skip_blanks(le, be);
+			if (after < be) {
+				int st2;
+				char d2, m2;
+				const char *np = after + spaces(after, be);
+				if (!scan_marker(np, be, &st2, &(int){0}, &d2, &m2))
+					return 1;
+			}
+			break;
+		}
+		sp2 = le;
+	}
+	return 0;
+}
+
 static int
 dolist(const char *b, const char *e, int n)
 {
@@ -1613,24 +1637,8 @@ dolist(const char *b, const char *e, int n)
 				}
 			}
 			/* check if item has blank between text blocks → loose */
-			if (!loose) {
-				const char *sp2;
-				for (sp2 = buf; sp2 < buf + i; ) {
-					const char *le = eol(sp2, buf + i);
-					if (isblankline(sp2, le)) {
-						const char *after = skip_blanks(le, buf + i);
-						if (after < buf + i) {
-							int st2;
-							char d2, m2;
-							const char *np = after + spaces(after, buf + i);
-							if (!scan_marker(np, buf + i, &st2, &(int){0}, &d2, &m2))
-								loose = 1; /* text after blank = loose */
-						}
-						break;
-					}
-					sp2 = le;
-				}
-			}
+			if (!loose && item_has_inner_blank(buf, i))
+				loose = 1;
 			if (!loose) tight = 1;
 			/* find first blank line to split inline vs block content */
 			{
