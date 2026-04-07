@@ -2913,19 +2913,48 @@ cdjot_convert(FILE *out, const char *buf, int len)
 }
 
 int
-main(void)
+main(int argc, char *argv[])
 {
 	char *buf = NULL;
 	int len = 0, cap = 0;
-	int n;
+	int n, i;
+	FILE *source = stdin;
+
+	for (i = 1; i < argc; i++) {
+		if (!strcmp("-v", argv[i])) {
+			fprintf(stderr, "cdjot 0.1\n");
+			return 0;
+		} else if (!strcmp("-h", argv[i])) {
+			fprintf(stderr, "Usage: %s [-h] [-v] [file]\n", argv[0]);
+			return 0;
+		} else if (!strcmp("--", argv[i])) {
+			i++;
+			break;
+		} else if (argv[i][0] == '-') {
+			fprintf(stderr, "Usage: %s [-h] [-v] [file]\n", argv[0]);
+			return 1;
+		} else {
+			break;
+		}
+	}
+	if (i < argc) {
+		source = fopen(argv[i], "r");
+		if (!source) {
+			fprintf(stderr, "cdjot: cannot open '%s'\n", argv[i]);
+			return 1;
+		}
+	}
 
 	do {
 		cap += BUFSIZ;
 		buf = realloc(buf, cap);
 		if (!buf) die("malloc");
-		n = fread(buf + len, 1, cap - len, stdin);
+		n = fread(buf + len, 1, cap - len, source);
 		len += n;
 	} while (n > 0);
+
+	if (source != stdin)
+		fclose(source);
 
 	cdjot_convert(stdout, buf, len);
 	free(buf);
