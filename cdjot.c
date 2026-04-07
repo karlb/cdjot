@@ -84,8 +84,8 @@ static int cap_pcls;
 static char *pending_attrs;
 static int cap_pattr;
 
-static char **used_ids;
-static int nused_ids, cap_ids;
+static struct { char *key; int count; } *id_ht; /* heading ID hash table */
+static int id_ht_sz, id_ht_cnt;
 
 static void
 die(const char *msg)
@@ -409,40 +409,48 @@ prev_line_attrs(const char *line, const char *start,
 		parse_attrs(pp + 1, pe, idp, clsp, extrap);
 }
 
+/* Find or insert key in id_ht; returns pointer to entry */
+static int
+id_intern(const char *s)
+{
+	unsigned h;
+	int i;
+	/* grow at 50% load */
+	if (id_ht_cnt * 2 >= id_ht_sz) {
+		int oldsz = id_ht_sz, j;
+		__typeof__(id_ht) old = id_ht;
+		id_ht_sz = oldsz ? oldsz * 2 : 64;
+		id_ht = calloc(id_ht_sz, sizeof(*id_ht));
+		if (!id_ht) die("malloc");
+		for (j = 0; j < oldsz; j++) {
+			if (!old[j].key) continue;
+			for (h = 0, i = 0; old[j].key[i]; i++)
+				h = (h * 16777619u) ^ (unsigned char)old[j].key[i];
+			i = h & (id_ht_sz - 1);
+			while (id_ht[i].key) i = (i + 1) & (id_ht_sz - 1);
+			id_ht[i] = old[j];
+		}
+		free(old);
+	}
+	for (h = 0, i = 0; s[i]; i++)
+		h = (h * 16777619u) ^ (unsigned char)s[i];
+	i = h & (id_ht_sz - 1);
+	while (id_ht[i].key) {
+		if (strcmp(id_ht[i].key, s) == 0) return i;
+		i = (i + 1) & (id_ht_sz - 1);
+	}
+	id_ht[i].key = strcpy(malloc(strlen(s) + 1), s);
+	id_ht[i].count = 0;
+	id_ht_cnt++;
+	return i;
+}
+
 static void
 dedup_id(char *id, int sz)
 {
-	int i, n;
-	char buf[256];
-
-	for (i = 0; i < nused_ids; i++)
-		if (strcmp(used_ids[i], id) == 0)
-			goto dup;
-	/* not a dup — record it */
-	GROWA(used_ids, nused_ids, cap_ids);
-	{
-		char *s = malloc(strlen(id)+1);
-		if (s)
-			used_ids[nused_ids++] = strcpy(s, id);
-	}
-	return;
-dup:
-	for (n = 1; ; n++) {
-		snprintf(buf, sizeof(buf), "%s-%d", id, n);
-		for (i = 0; i < nused_ids; i++)
-			if (strcmp(used_ids[i], buf) == 0)
-				goto next;
-		/* found unique */
-		snprintf(id, sz, "%s", buf);
-		GROWA(used_ids, nused_ids, cap_ids);
-		{
-			char *s = malloc(strlen(id)+1);
-			if (s)
-				used_ids[nused_ids++] = strcpy(s, id);
-		}
-		return;
-	next:;
-	}
+	int idx = id_intern(id);
+	if (id_ht[idx].count++ > 0)
+		snprintf(id, sz, "%s-%d", id_ht[idx].key, id_ht[idx].count - 1);
 }
 
 static void
@@ -2738,13 +2746,10 @@ prescan(const char *b, const char *e)
 		line = eol(line, e);
 	}
 
-	/* register heading auto-refs (skipping headings with explicit refs) */
+	/* register heading auto-refs; explicit refs shadow these at lookup */
 	{
 		int hi;
 		for (hi = 0; hi < nhdefs; hi++) {
-			if (findref(hdefs[hi].content, hdefs[hi].len,
-			    &(const char *){0}, &(int){0}))
-				continue;
 			char *custom_id = NULL;
 			prev_line_attrs(hdefs[hi].line, b,
 			    &custom_id, NULL, NULL);
@@ -2888,7 +2893,7 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	in_container = 0;
 	tight = 0;
 	proc_base = NULL;
-	used_ids = NULL; nused_ids = 0; cap_ids = 0;
+	id_ht = NULL; id_ht_sz = 0; id_ht_cnt = 0;
 	urlbuf = NULL; urlbuflen = 0; cap_url = 0;
 
 	cap_pid = cap_pcls = cap_pattr = 16;
@@ -2912,15 +2917,15 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	for (i = 0; i < nfootnotes; i++)
 		free(footnotes[i].content);
 	free(footnotes);
-	for (i = 0; i < nused_ids; i++)
-		free(used_ids[i]);
-	free(used_ids);
+	for (i = 0; i < id_ht_sz; i++)
+		free(id_ht[i].key);
+	free(id_ht);
 	free(urlbuf);
 	free(pending_id);
 	free(pending_class);
 	free(pending_attrs);
 
-	refs = NULL; footnotes = NULL; used_ids = NULL;
+	refs = NULL; footnotes = NULL; id_ht = NULL;
 	urlbuf = NULL;
 	pending_id = pending_class = pending_attrs = NULL;
 	output = NULL;
