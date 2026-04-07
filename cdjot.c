@@ -11,6 +11,7 @@
 #define LEN(x) (sizeof(x)/sizeof(x[0]))
 #define ADDC(b,i) do { if ((i) % BUFSIZ == 0) { \
 	b = realloc(b, ((i) + BUFSIZ)); if (!b) die("malloc"); } } while(0); b[i]
+#define PUSH(b,i,ch) do { ADDC(b,i) = (ch); (i)++; } while(0)
 #define GROWBUF(b,len,cap,need) do { if ((len)+(need)>(cap)) { \
 	(cap) = ((cap)+(need)) * 2; (b) = realloc((b), (cap)); \
 	if (!(b)) die("malloc"); } } while(0)
@@ -699,7 +700,7 @@ dodeflist(const char *b, const char *e, int n)
 				term_is_fence = 1;
 			if (!term_is_fence) {
 				const char *le = trim_end(p, eol(line, e));
-				for (q = p; q < le; q++) { ADDC(buf, i) = *q; i++; }
+				for (q = p; q < le; q++) PUSH(buf, i, *q);
 			}
 		}
 		line = eol(line, e);
@@ -710,9 +711,9 @@ dodeflist(const char *b, const char *e, int n)
 			if (*p == ':' && p + 1 < e && (p[1] == ' ' || p[1] == '\n'))
 				break;
 			p += (sp > 1) ? 1 : sp;
-			if (i > 0) { ADDC(buf, i) = '\n'; i++; }
+			if (i > 0) PUSH(buf, i, '\n');
 			const char *le = trim_end(p, eol(line, e));
-			for (q = p; q < le; q++) { ADDC(buf, i) = *q; i++; }
+			for (q = p; q < le; q++) PUSH(buf, i, *q);
 			line = eol(line, e);
 		}
 		ADDC(buf, i) = '\0';
@@ -732,15 +733,12 @@ dodeflist(const char *b, const char *e, int n)
 		/* if term was a fence, include the fence line in definition */
 		if (term_is_fence) {
 			const char *fle = eol(p, e);
-			for (q = p; q < fle; q++) {
-				ADDC(buf, i) = *q;
-				i++;
-			}
+			for (q = p; q < fle; q++)
+				PUSH(buf, i, *q);
 		}
 		while (line < e) {
 			if (isblankline(line, eol(line, e))) {
-				ADDC(buf, i) = '\n';
-				i++;
+				PUSH(buf, i, '\n');
 				line = eol(line, e);
 				continue;
 			}
@@ -749,10 +747,8 @@ dodeflist(const char *b, const char *e, int n)
 			{
 				const char *le = eol(line, e);
 				int strip = (sp > 2) ? 2 : sp;
-				for (q = line + strip; q < le; q++) {
-					ADDC(buf, i) = *q;
-					i++;
-				}
+				for (q = line + strip; q < le; q++)
+					PUSH(buf, i, *q);
 			}
 			line = eol(line, e);
 		}
@@ -834,10 +830,8 @@ dodiv(const char *b, const char *e, int n)
 		}
 		{
 			const char *le = eol(line, e);
-			for (q = line; q < le; q++) {
-				ADDC(buf, i) = *q;
-				i++;
-			}
+			for (q = line; q < le; q++)
+				PUSH(buf, i, *q);
 		}
 		line = eol(line, e);
 	}
@@ -1001,10 +995,8 @@ doheading(const char *b, const char *e, int n)
 	while (content < cend && (*content == ' ' || *content == '\t'
 	    || *content == '\n' || *content == '\r'))
 		content++;
-	for (q = content; q < cend; q++) {
-		ADDC(buf, blen) = *q;
-		blen++;
-	}
+	for (q = content; q < cend; q++)
+		PUSH(buf, blen, *q);
 	line = eol(b, e);
 	while (line < e && !isblankline(line, eol(line, e))) {
 		const char *lp = line;
@@ -1014,10 +1006,8 @@ doheading(const char *b, const char *e, int n)
 		if (hl >= 1 && hl <= 6 && hl != level && lp + hl < e
 		    && (lp[hl] == ' ' || lp[hl] == '\n'))
 			break; /* different heading level */
-		if (blen > 0) {
-			ADDC(buf, blen) = '\n';
-			blen++;
-		}
+		if (blen > 0)
+			PUSH(buf, blen, '\n');
 		if (hl == level && lp + hl < e && (lp[hl] == ' ' || lp[hl] == '\n')) {
 			/* same level: strip prefix */
 			lp += hl;
@@ -1026,10 +1016,8 @@ doheading(const char *b, const char *e, int n)
 			lp = line;
 		}
 		q = trim_end(lp, eol(line, e));
-		for (; lp < q; lp++) {
-			ADDC(buf, blen) = *lp;
-			blen++;
-		}
+		for (; lp < q; lp++)
+			PUSH(buf, blen, *lp);
 		line = eol(line, e);
 	}
 	while (blen > 0 && isws(buf[blen-1]))
@@ -1097,14 +1085,14 @@ doblockquote(const char *b, const char *e, int n)
 				if (p < e && *p == ' ') p++;
 				q = eol(line, e);
 				int blank = isblankline(p, q);
-				for (; p < q; p++) { ADDC(buf, i) = *p; i++; }
+				for (; p < q; p++) PUSH(buf, i, *p);
 				in_para = !blank;
 			} else if (isblankline(line, eol(line, e))) {
 				break;
 			} else if (in_para) {
 				/* lazy continuation */
 				q = eol(line, e);
-				for (p = line; p < q; p++) { ADDC(buf, i) = *p; i++; }
+				for (p = line; p < q; p++) PUSH(buf, i, *p);
 			} else {
 				break;
 			}
@@ -1493,14 +1481,13 @@ dolist(const char *b, const char *e, int n)
 		i = 0;
 		p = line + indent;
 		q = eol(line, e);
-		for (; p < q; p++) { ADDC(buf, i) = *p; i++; }
+		for (; p < q; p++) PUSH(buf, i, *p);
 		line = q;
 
 		while (line < e) {
 			if (isblankline(line, eol(line, e))) {
 				had_blank = 1;
-				ADDC(buf, i) = '\n';
-				i++;
+				PUSH(buf, i, '\n');
 				line = eol(line, e);
 				continue;
 			}
@@ -1512,10 +1499,8 @@ dolist(const char *b, const char *e, int n)
 				else
 					strip = marker_col + 1;
 				q = eol(line, e);
-				for (p = line + strip; p < q; p++) {
-					ADDC(buf, i) = *p;
-					i++;
-				}
+				for (p = line + strip; p < q; p++)
+					PUSH(buf, i, *p);
 				line = q;
 				continue;
 			}
@@ -1541,10 +1526,8 @@ dolist(const char *b, const char *e, int n)
 					int strip = sp;
 					if (strip > indent) strip = indent;
 					else if (strip > marker_col + 1) strip = marker_col + 1;
-					for (p = line + strip; p < q; p++) {
-						ADDC(buf, i) = *p;
-						i++;
-					}
+					for (p = line + strip; p < q; p++)
+						PUSH(buf, i, *p);
 				}
 				line = q;
 				continue;
@@ -1564,10 +1547,8 @@ dolist(const char *b, const char *e, int n)
 					    &st2, &(int){0}, &d2, &m2)) {
 						/* last content is sub-list: lazy OK */
 						q = eol(line, e);
-						for (p = line; p < q; p++) {
-							ADDC(buf, i) = *p;
-							i++;
-						}
+						for (p = line; p < q; p++)
+							PUSH(buf, i, *p);
 						line = q;
 						continue;
 					}
@@ -2626,33 +2607,26 @@ prescan(const char *b, const char *e)
 				int fni = 0;
 				{
 					const char *cend = trim_end(fp, eol(line, e));
-					for (; fp < cend; fp++) {
-						ADDC(fnbuf, fni) = *fp;
-						fni++;
-					}
+					for (; fp < cend; fp++)
+						PUSH(fnbuf, fni, *fp);
 				}
 				line = eol(line, e);
 				/* collect continuation lines (blank or indented by 2+) */
 				while (line < e) {
 					if (isblankline(line, eol(line, e))) {
-						ADDC(fnbuf, fni) = '\n';
-						fni++;
+						PUSH(fnbuf, fni, '\n');
 						line = eol(line, e);
 						continue;
 					}
 					int csp = spaces(line, e);
 					if (csp < 2) break;
-					if (fni > 0) {
-						ADDC(fnbuf, fni) = '\n';
-						fni++;
-					}
+					if (fni > 0)
+						PUSH(fnbuf, fni, '\n');
 					const char *le = eol(line, e);
 					const char *lp = line + 2;
 					const char *lend = trim_end(lp, le);
-					for (; lp < lend; lp++) {
-						ADDC(fnbuf, fni) = *lp;
-						fni++;
-					}
+					for (; lp < lend; lp++)
+						PUSH(fnbuf, fni, *lp);
 					line = eol(line, e);
 				}
 				while (fni > 0 && fnbuf[fni-1] == '\n') fni--;
