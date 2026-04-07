@@ -1,11 +1,12 @@
 /* cdjot - djot to HTML converter
- * Reads djot from stdin, writes HTML to stdout.
  * No dependencies beyond libc.
  */
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "cdjot.h"
 
 #define LEN(x) (sizeof(x)/sizeof(x[0]))
 #define ADDC(b,i) do { if ((i) % BUFSIZ == 0) { \
@@ -70,6 +71,7 @@ static int sections[6], nsections;
 static int in_container;
 static int tight;
 static const char *proc_base;
+static FILE *output;
 
 static char *pending_id;
 static int cap_pid;
@@ -123,10 +125,10 @@ static void
 hprint(const char *b, const char *e)
 {
 	for (; b < e; b++) {
-		if (*b == '&')      fputs("&amp;", stdout);
-		else if (*b == '<') fputs("&lt;", stdout);
-		else if (*b == '>') fputs("&gt;", stdout);
-		else                fputc(*b, stdout);
+		if (*b == '&')      fputs("&amp;", output);
+		else if (*b == '<') fputs("&lt;", output);
+		else if (*b == '>') fputs("&gt;", output);
+		else                fputc(*b, output);
 	}
 }
 
@@ -257,7 +259,7 @@ static void
 close_sections(int level)
 {
 	while (nsections > 0 && sections[nsections-1] >= level) {
-		fputs("</section>\n", stdout);
+		fputs("</section>\n", output);
 		nsections--;
 	}
 }
@@ -347,9 +349,9 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 static void
 emit_attrs(const char *id, const char *cls, const char *extra)
 {
-	if (id && id[0]) printf(" id=\"%s\"", id);
-	if (cls && cls[0]) printf(" class=\"%s\"", cls);
-	if (extra && extra[0]) printf(" %s", extra);
+	if (id && id[0]) fprintf(output, " id=\"%s\"", id);
+	if (cls && cls[0]) fprintf(output, " class=\"%s\"", cls);
+	if (extra && extra[0]) fprintf(output, " %s", extra);
 }
 
 static void
@@ -368,14 +370,14 @@ emit_fence_lines(const char *b, const char *e, int indent)
 static void
 emit_code_open(const char *info, const char *infoend)
 {
-	fputs("<pre", stdout);
+	fputs("<pre", output);
 	emit_pending();
 	if (info < infoend) {
-		fputs("><code class=\"language-", stdout);
+		fputs("><code class=\"language-", output);
 		hprint(info, infoend);
-		fputs("\">", stdout);
+		fputs("\">", output);
 	} else {
-		fputs("><code>", stdout);
+		fputs("><code>", output);
 	}
 }
 
@@ -514,12 +516,12 @@ emit_cell(const char *b, const char *ce, int is_header, int align)
 	const char *tag = is_header ? "th" : "td";
 	const char *astyle[] = { "", " style=\"text-align: left;\"",
 	    " style=\"text-align: right;\"", " style=\"text-align: center;\"" };
-	printf("<%s%s>", tag, astyle[align & 3]);
+	fprintf(output, "<%s%s>", tag, astyle[align & 3]);
 	/* trim spaces */
 	while (b < ce && *b == ' ') b++;
 	while (ce > b && ce[-1] == ' ') ce--;
 	process(b, ce, 0);
-	printf("</%s>\n", tag);
+	fprintf(output, "</%s>\n", tag);
 }
 
 static int
@@ -543,7 +545,7 @@ dotable(const char *b, const char *e, int n)
 		if (!np) return 0; /* no closing pipe — not a table */
 	}
 
-	fputs("<table>\n", stdout);
+	fputs("<table>\n", output);
 
 	/* scan ahead for caption (blank line then ^ after table rows) */
 	{
@@ -565,9 +567,9 @@ dotable(const char *b, const char *e, int n)
 				while (capend < e && !isblankline(capend, eol(capend, e)))
 					capend = eol(capend, e);
 				const char *ce = trim_end(capstart, capend);
-				fputs("<caption>", stdout);
+				fputs("<caption>", output);
 				process(capstart, ce, 0);
-				fputs("</caption>\n", stdout);
+				fputs("</caption>\n", output);
 				cap = capend; /* remember where caption ends */
 			}
 		}
@@ -608,7 +610,7 @@ dotable(const char *b, const char *e, int n)
 		}
 
 		/* parse cells */
-		fputs("<tr>\n", stdout);
+		fputs("<tr>\n", output);
 		p++; /* skip leading | */
 		{
 			int col = 0;
@@ -645,7 +647,7 @@ dotable(const char *b, const char *e, int n)
 				}
 			}
 		}
-		fputs("</tr>\n", stdout);
+		fputs("</tr>\n", output);
 		is_header = 0;
 		line = eol(line, e);
 	}
@@ -653,7 +655,7 @@ dotable(const char *b, const char *e, int n)
 	/* advance past caption if we emitted one */
 	if (cap > line) line = cap;
 
-	fputs("</table>\n", stdout);
+	fputs("</table>\n", output);
 	return -(line - b);
 }
 
@@ -669,7 +671,7 @@ dodeflist(const char *b, const char *e, int n)
 	if (p >= e || *p != ':') return 0;
 	if (p + 1 >= e || (p[1] != ' ' && p[1] != '\n')) return 0;
 
-	fputs("<dl>\n", stdout);
+	fputs("<dl>\n", output);
 
 	line = b;
 	while (line < e) {
@@ -709,9 +711,9 @@ dodeflist(const char *b, const char *e, int n)
 			line = eol(line, e);
 		}
 		ADDC(buf, i) = '\0';
-		fputs("<dt>", stdout);
+		fputs("<dt>", output);
 		process(buf, buf + i, 0);
-		fputs("</dt>\n", stdout);
+		fputs("</dt>\n", output);
 		free(buf);
 
 		/* skip blank lines */
@@ -755,10 +757,10 @@ dodeflist(const char *b, const char *e, int n)
 		{
 			int save = in_container;
 			in_container = 1;
-			fputs("<dd>\n", stdout);
+			fputs("<dd>\n", output);
 			if (i > 0)
 				process(buf, buf + i, 1);
-			fputs("</dd>\n", stdout);
+			fputs("</dd>\n", output);
 			in_container = save;
 		}
 		free(buf);
@@ -768,7 +770,7 @@ dodeflist(const char *b, const char *e, int n)
 			line = eol(line, e);
 	}
 
-	fputs("</dl>\n", stdout);
+	fputs("</dl>\n", output);
 	return -(line - b);
 }
 
@@ -850,12 +852,12 @@ done:
 			memcpy(pending_class + cn, cls, add);
 			pending_class[cn + add] = '\0';
 		}
-		fputs("<div", stdout);
+		fputs("<div", output);
 		emit_attrs(pending_id, pending_class, pending_attrs);
-		fputs(">\n", stdout);
+		fputs(">\n", output);
 		clear_pending();
 		process(buf, buf + i, 1);
-		fputs("</div>\n", stdout);
+		fputs("</div>\n", output);
 		in_container = save;
 	}
 	free(buf);
@@ -1040,19 +1042,19 @@ doheading(const char *b, const char *e, int n)
 
 		if (!in_container) {
 			close_sections(level);
-			printf("<section id=\"%s\">\n", hid);
+			fprintf(output, "<section id=\"%s\">\n", hid);
 			if (nsections < 6) sections[nsections++] = level;
 		}
-		printf("<h%d", level);
+		fprintf(output, "<h%d", level);
 		if (in_container)
-			printf(" id=\"%s\"", hid);
+			fprintf(output, " id=\"%s\"", hid);
 		if (pending_class[0])
-			printf(" class=\"%s\"", pending_class);
-		fputc('>', stdout);
+			fprintf(output, " class=\"%s\"", pending_class);
+		fputc('>', output);
 		clear_pending();
 	}
 	process(buf, buf + blen, 0);
-	printf("</h%d>\n", level);
+	fprintf(output, "</h%d>\n", level);
 	free(buf);
 	return -(line - b);
 }
@@ -1106,11 +1108,11 @@ doblockquote(const char *b, const char *e, int n)
 	{
 		int save = in_container;
 		in_container = 1;
-		fputs("<blockquote", stdout);
+		fputs("<blockquote", output);
 		emit_pending();
-		fputs(">\n", stdout);
+		fputs(">\n", output);
 		process(buf, buf + i, 1);
-		fputs("</blockquote>\n", stdout);
+		fputs("</blockquote>\n", output);
 		in_container = save;
 	}
 	free(buf);
@@ -1166,11 +1168,11 @@ docodefence(const char *b, const char *e, int n)
 			if (cl >= flen && isblankline(q + cl, eol(line, e))) {
 				if (is_raw && rawfmtlen == 4
 				    && !memcmp(rawfmt, "html", 4)) {
-					fwrite(p, 1, line - p, stdout);
+					fwrite(p, 1, line - p, output);
 				} else if (!is_raw) {
 					emit_code_open(info, infoend);
 					emit_fence_lines(p, line, indent);
-					fputs("</code></pre>\n", stdout);
+					fputs("</code></pre>\n", output);
 				}
 				/* other raw formats: silently drop */
 				return -(eol(line, e) - b);
@@ -1179,11 +1181,11 @@ docodefence(const char *b, const char *e, int n)
 		}
 		/* unclosed: treat rest as code */
 		if (is_raw && rawfmtlen == 4 && !memcmp(rawfmt, "html", 4)) {
-			fwrite(p, 1, e - p, stdout);
+			fwrite(p, 1, e - p, output);
 		} else if (!is_raw) {
 			emit_code_open(info, infoend);
 			emit_fence_lines(p, e, indent);
-			fputs("</code></pre>\n", stdout);
+			fputs("</code></pre>\n", output);
 		}
 	}
 	return -(e - b);
@@ -1207,9 +1209,9 @@ dothematicbreak(const char *b, const char *e, int n)
 		else if (*p != ' ' && *p != '\t') return 0;
 	}
 	if (count < 3) return 0;
-	fputs("<hr", stdout);
+	fputs("<hr", output);
 	emit_pending();
-	fputs(">\n", stdout);
+	fputs(">\n", output);
 	return -(eol(b, e) - b);
 }
 
@@ -1427,20 +1429,20 @@ dolist(const char *b, const char *e, int n)
 				pset(&pending_class, &cap_pcls, "task-list");
 			}
 		}
-		fputs("<ul", stdout);
+		fputs("<ul", output);
 		if (has_pending()) {
 			emit_attrs(pending_id, pending_class, pending_attrs);
 			clear_pending();
 		} else if (is_task) {
-			fputs(" class=\"task-list\"", stdout);
+			fputs(" class=\"task-list\"", output);
 		}
-		fputs(">\n", stdout);
+		fputs(">\n", output);
 	} else {
-		fputs("<ol", stdout);
-		if (start_num != 1) printf(" start=\"%d\"", start_num);
-		fputs(typattr[style], stdout);
+		fputs("<ol", output);
+		if (start_num != 1) fprintf(output, " start=\"%d\"", start_num);
+		fputs(typattr[style], output);
 		emit_pending();
-		fputs(">\n", stdout);
+		fputs(">\n", output);
 	}
 
 	loose = 0;
@@ -1600,13 +1602,13 @@ dolist(const char *b, const char *e, int n)
 			int save_tight = tight;
 			int save_cont = in_container;
 			in_container = 1;
-			fputs("<li>\n", stdout);
+			fputs("<li>\n", output);
 			/* task list checkbox */
 			if (is_task && i >= 3 && buf[0] == '['
 			    && (buf[1] == ' ' || buf[1] == 'x')
 			    && buf[2] == ']') {
 				int checked = (buf[1] == 'x');
-				printf("<input disabled=\"\" type=\"checkbox\"%s/>\n",
+				fprintf(output, "<input disabled=\"\" type=\"checkbox\"%s/>\n",
 				    checked ? " checked=\"\"" : "");
 				/* skip [ ] or [x] and trailing space */
 				{
@@ -1654,7 +1656,7 @@ dolist(const char *b, const char *e, int n)
 					while (bp < pe && (*bp == ' ' || *bp == '\t'))
 						bp++;
 					process(bp, pe, 0);
-					fputc('\n', stdout);
+					fputc('\n', output);
 					/* post-blank: block */
 					process(split, be, 1);
 				} else {
@@ -1664,14 +1666,14 @@ dolist(const char *b, const char *e, int n)
 			tight = save_tight;
 			in_container = save_cont;
 		}
-		fputs("</li>\n", stdout);
+		fputs("</li>\n", output);
 		free(buf);
 		buf = NULL;
 		had_blank = 0;
 	}
 	}
 
-	fputs(style == 0 ? "</ul>\n" : "</ol>\n", stdout);
+	fputs(style == 0 ? "</ul>\n" : "</ol>\n", output);
 	return -(line - b);
 }
 
@@ -1834,14 +1836,14 @@ doparagraph(const char *b, const char *e, int n)
 		}
 
 		if (!tight) {
-			fputs("<p", stdout);
+			fputs("<p", output);
 			if (has_pending()) {
 				if (pending_id[0])
 					dedup_id(pending_id, cap_pid);
 				emit_attrs(pending_id, pending_class, pending_attrs);
 			}
 			clear_pending();
-			fputc('>', stdout);
+			fputc('>', output);
 		}
 		if (transformed) {
 			process(nbuf, nbuf + nlen, 0);
@@ -1850,8 +1852,8 @@ doparagraph(const char *b, const char *e, int n)
 		}
 		free(nbuf);
 	}
-	if (!tight) fputs("</p>", stdout);
-	fputc('\n', stdout);
+	if (!tight) fputs("</p>", output);
+	fputc('\n', output);
 	return -(end - start);
 }
 
@@ -1866,11 +1868,11 @@ dolinebreak(const char *b, const char *e, int n)
 		while (p < e && (*p == ' ' || *p == '\t')) p++;
 		if (p < e && (*p == '\n' || *p == '\r')) {
 			if (*p == '\r' && p + 1 < e && p[1] == '\n') p++;
-			fputs("<br>\n", stdout);
+			fputs("<br>\n", output);
 			return p + 1 - b;
 		}
 		if (b + 1 < e && b[1] == ' ') {
-			fputs("&nbsp;", stdout);
+			fputs("&nbsp;", output);
 			return 2;
 		}
 		if (b + 1 < e && isasciipunct(b[1])) {
@@ -1882,7 +1884,7 @@ dolinebreak(const char *b, const char *e, int n)
 	if (*b == '\n') {
 		const char *q = b + 1;
 		while (q < e && (*q == ' ' || *q == '\t')) q++;
-		fputc('\n', stdout);
+		fputc('\n', output);
 		return q - b;
 	}
 	return 0;
@@ -1937,23 +1939,23 @@ docode(const char *b, const char *e, int n)
 					int fmtlen = fe - fmt;
 					if (fmtlen == 4 && !memcmp(fmt, "html", 4)) {
 						/* raw html: output unescaped */
-						fwrite(code, 1, codelen, stdout);
+						fwrite(code, 1, codelen, output);
 					}
 					/* other formats: silently drop */
 					return fe + 1 - start;
 				}
 			}
 			if (math) {
-				printf("<span class=\"math %s\">%s",
+				fprintf(output, "<span class=\"math %s\">%s",
 				    math == 1 ? "inline" : "display",
 				    math == 1 ? "\\(" : "\\[");
 				hprint(code, code + codelen);
-				fputs(math == 1 ? "\\)" : "\\]", stdout);
-				fputs("</span>", stdout);
+				fputs(math == 1 ? "\\)" : "\\]", output);
+				fputs("</span>", output);
 			} else {
-				fputs("<code>", stdout);
+				fputs("<code>", output);
 				hprint(code, code + codelen);
-				fputs("</code>", stdout);
+				fputs("</code>", output);
 			}
 			return p + count - start;
 		}
@@ -1967,9 +1969,9 @@ docode(const char *b, const char *e, int n)
 	if (codelen >= 2 && code[0] == ' ' && code[codelen-1] == ' ') {
 		code++; codelen -= 2;
 	}
-	fputs("<code>", stdout);
+	fputs("<code>", output);
 	hprint(code, code + codelen);
-	fputs("</code>", stdout);
+	fputs("</code>", output);
 	return e - start;
 }
 
@@ -2038,10 +2040,10 @@ dosurround(const char *b, const char *e, int n)
 						int j;
 						surround_lookup(ch, &ot, &ct);
 						for (j = 0; j < run; j++)
-							fputs(ot, stdout);
+							fputs(ot, output);
 						process(b + run, rp, 0);
 						for (j = 0; j < run; j++)
-							fputs(ct, stdout);
+							fputs(ct, output);
 						return rp + run - b;
 					}
 				}
@@ -2146,9 +2148,9 @@ dosurround(const char *b, const char *e, int n)
 			{
 				const char *otag, *ctag;
 				surround_lookup(ch, &otag, &ctag);
-				fputs(otag, stdout);
+				fputs(otag, output);
 				process(start, stop, 0);
-				fputs(ctag, stdout);
+				fputs(ctag, output);
 			}
 			return stop + 1 + consumed_close - b;
 		}
@@ -2207,14 +2209,14 @@ emit_url(const char *b, const char *e)
 		if (*b == '\n' || *b == '\r') continue;
 		if (*b == '\\' && b + 1 < e && isasciipunct(b[1])) {
 			b++;
-			if (*b == '&') fputs("&amp;", stdout);
-			else if (*b == '"') fputs("&quot;", stdout);
-			else fputc(*b, stdout);
+			if (*b == '&') fputs("&amp;", output);
+			else if (*b == '"') fputs("&quot;", output);
+			else fputc(*b, output);
 			continue;
 		}
-		if (*b == '&') fputs("&amp;", stdout);
-		else if (*b == '"') fputs("&quot;", stdout);
-		else fputc(*b, stdout);
+		if (*b == '&') fputs("&amp;", output);
+		else if (*b == '"') fputs("&quot;", output);
+		else fputc(*b, output);
 	}
 }
 
@@ -2263,7 +2265,7 @@ dolink(const char *b, const char *e, int n)
 				if (!footnotes[found].num)
 					footnotes[found].num = ++footnote_counter;
 				int num = footnotes[found].num;
-				printf("<a id=\"fnref%d\" href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
+				fprintf(output, "<a id=\"fnref%d\" href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
 				    num, num, num);
 				return fe + 1 - b;
 			}
@@ -2294,17 +2296,17 @@ dolink(const char *b, const char *e, int n)
 		while (dest < destend && isws(*dest)) dest++;
 		while (destend > dest && isws(destend[-1])) destend--;
 		if (img) {
-			fputs("<img alt=\"", stdout);
+			fputs("<img alt=\"", output);
 			altprint(text, textend);
-			fputs("\" src=\"", stdout);
+			fputs("\" src=\"", output);
 			emit_url(dest, destend);
-			fputs("\">", stdout);
+			fputs("\">", output);
 		} else {
-			fputs("<a href=\"", stdout);
+			fputs("<a href=\"", output);
 			emit_url(dest, destend);
-			fputs("\">", stdout);
+			fputs("\">", output);
 			process(text, textend, 0);
-			fputs("</a>", stdout);
+			fputs("</a>", output);
 		}
 		return q + 1 - b;
 	}
@@ -2338,34 +2340,34 @@ dolink(const char *b, const char *e, int n)
 				}
 				rattr = inline_attr[0] ? inline_attr : refs[ri-1].attrs;
 				if (img) {
-					fputs("<img alt=\"", stdout);
+					fputs("<img alt=\"", output);
 					altprint(text, textend);
-					fputs("\" src=\"", stdout);
+					fputs("\" src=\"", output);
 					emit_url(url, url + urllen);
-					fputc('"', stdout);
-					if (rattr[0]) printf(" %s", rattr);
-					fputs(">", stdout);
+					fputc('"', output);
+					if (rattr[0]) fprintf(output, " %s", rattr);
+					fputs(">", output);
 				} else {
-					fputs("<a href=\"", stdout);
+					fputs("<a href=\"", output);
 					emit_url(url, url + urllen);
-					fputc('"', stdout);
-					if (rattr[0]) printf(" %s", rattr);
-					fputs(">", stdout);
+					fputc('"', output);
+					if (rattr[0]) fprintf(output, " %s", rattr);
+					fputs(">", output);
 					process(text, textend, 0);
-					fputs("</a>", stdout);
+					fputs("</a>", output);
 				}
 				return q + 1 - b;
 			}
 		}
 		/* no matching ref: render as link without href */
 		if (img) {
-			fputs("<img alt=\"", stdout);
+			fputs("<img alt=\"", output);
 			altprint(text, textend);
-			fputs("\">", stdout);
+			fputs("\">", output);
 		} else {
-			fputs("<a>", stdout);
+			fputs("<a>", output);
 			process(text, textend, 0);
-			fputs("</a>", stdout);
+			fputs("</a>", output);
 		}
 		return q + 1 - b;
 	}
@@ -2378,11 +2380,11 @@ dolink(const char *b, const char *e, int n)
 			char sid[128], scls[128], sextra[256];
 			parse_attrs(ab, ae, sid, sizeof(sid),
 			    scls, sizeof(scls), sextra, sizeof(sextra));
-			fputs("<span", stdout);
+			fputs("<span", output);
 			emit_attrs(sid, scls, sextra);
-			fputc('>', stdout);
+			fputc('>', output);
 			process(text, textend, 0);
-			fputs("</span>", stdout);
+			fputs("</span>", output);
 			return ae + 1 - b;
 		}
 	}
@@ -2400,17 +2402,17 @@ doautolink(const char *b, const char *e, int n)
 	if (!memchr(b + 1, ':', p - b - 1) && !memchr(b + 1, '@', p - b - 1))
 		return 0;
 	if (memchr(b + 1, '@', p - b - 1) && !memchr(b + 1, ':', p - b - 1)) {
-		fputs("<a href=\"mailto:", stdout);
+		fputs("<a href=\"mailto:", output);
 		hprint(b + 1, p);
-		fputs("\">", stdout);
+		fputs("\">", output);
 		hprint(b + 1, p);
-		fputs("</a>", stdout);
+		fputs("</a>", output);
 	} else {
-		fputs("<a href=\"", stdout);
+		fputs("<a href=\"", output);
 		emit_url(b + 1, p);
-		fputs("\">", stdout);
+		fputs("\">", output);
 		hprint(b + 1, p);
-		fputs("</a>", stdout);
+		fputs("</a>", output);
 	}
 	return p + 1 - b;
 }
@@ -2446,20 +2448,20 @@ doreplace(const char *b, const char *e, int n)
 		else if (run % 3 == 1) { en = 2; em = (run - 4) / 3; }
 		else if (run % 2 == 0) { en = run / 2; }
 		else                   { en = 1; em = (run - 2) / 3; }
-		while (em-- > 0) fputs("\xe2\x80\x94", stdout);
-		while (en-- > 0) fputs("\xe2\x80\x93", stdout);
+		while (em-- > 0) fputs("\xe2\x80\x94", output);
+		while (en-- > 0) fputs("\xe2\x80\x93", output);
 		return run;
 	}
 
 	if (e - b >= 3 && !strncmp(b, "...", 3)) {
-		fputs("\xe2\x80\xa6", stdout);
+		fputs("\xe2\x80\xa6", output);
 		return 3;
 	}
 
 	/* explicit quote markers: {' → left, '} → right */
 	if (*b == '{' && b + 1 < e && (b[1] == '\'' || b[1] == '"')) {
 		int dbl = (b[1] == '"');
-		fputs(dbl ? "\xe2\x80\x9c" : "\xe2\x80\x98", stdout);
+		fputs(dbl ? "\xe2\x80\x9c" : "\xe2\x80\x98", output);
 		return 2;
 	}
 
@@ -2468,12 +2470,12 @@ doreplace(const char *b, const char *e, int n)
 		after = (b + 1 < e) ? b[1] : 0;
 		/* explicit closer: '} or "} */
 		if (after == '}') {
-			fputs(*b == '"' ? "\xe2\x80\x9d" : "\xe2\x80\x99", stdout);
+			fputs(*b == '"' ? "\xe2\x80\x9d" : "\xe2\x80\x99", output);
 			return 2; /* consume the } too */
 		}
 		/* ' before digit or after ] is always apostrophe */
 		if (*b == '\'' && (isdigit((unsigned char)after) || before == ']')) {
-			fputs("\xe2\x80\x99", stdout);
+			fputs("\xe2\x80\x99", output);
 			return 1;
 		}
 		can_open = !isws(after) && (isws(before) || isasciipunct(before) || before == 0);
@@ -2481,12 +2483,12 @@ doreplace(const char *b, const char *e, int n)
 		if (*b == '"') {
 			/* " after = is always opening (attribute value context) */
 			if (before == '=') {
-				fputs("\xe2\x80\x9c", stdout);
+				fputs("\xe2\x80\x9c", output);
 				return 1;
 			}
-			fputs(can_open && !can_close ? "\xe2\x80\x9c" : "\xe2\x80\x9d", stdout);
+			fputs(can_open && !can_close ? "\xe2\x80\x9c" : "\xe2\x80\x9d", output);
 		} else if (can_close && !can_open) {
-			fputs("\xe2\x80\x99", stdout);
+			fputs("\xe2\x80\x99", output);
 		} else if (can_open) {
 			/* look-ahead: simulate stack matching to check if this
 			 * opener has a closer. Unmatched openers → apostrophe */
@@ -2501,9 +2503,9 @@ doreplace(const char *b, const char *e, int n)
 					if (qo) stack++;
 				}
 			}
-			fputs(stack == 0 ? "\xe2\x80\x98" : "\xe2\x80\x99", stdout);
+			fputs(stack == 0 ? "\xe2\x80\x98" : "\xe2\x80\x99", output);
 		} else {
-			fputs("\xe2\x80\x99", stdout); /* intra-word: apostrophe */
+			fputs("\xe2\x80\x99", output); /* intra-word: apostrophe */
 		}
 		return 1;
 	}
@@ -2517,15 +2519,15 @@ doreplace(const char *b, const char *e, int n)
 			while (r < e && (*r == ' ' || *r == '\t')) r++;
 			if (r < e && (*r == '\n' || *r == '\r')) {
 				if (*r == '\r' && r + 1 < e && r[1] == '\n') r++;
-				fputs("<br>\n", stdout);
+				fputs("<br>\n", output);
 				return r + 1 - b;
 			}
 		}
 	}
 
-	if (*b == '&') { fputs("&amp;", stdout); return 1; }
-	if (*b == '<') { fputs("&lt;", stdout); return 1; }
-	if (*b == '>') { fputs("&gt;", stdout); return 1; }
+	if (*b == '&') { fputs("&amp;", output); return 1; }
+	if (*b == '<') { fputs("&lt;", output); return 1; }
+	if (*b == '>') { fputs("&gt;", output); return 1; }
 
 	return 0;
 }
@@ -2557,7 +2559,7 @@ process(const char *b, const char *e, int newblock)
 		if (affected) {
 			p += abs(affected);
 		} else {
-			fputc(*p++, stdout);
+			fputc(*p++, output);
 		}
 
 		if (p < e && p[0] == '\n' && p + 1 < e && p[1] == '\n')
@@ -2780,7 +2782,7 @@ emit_endnotes(void)
 	if (!any) return;
 
 	/* sort by sequential number to emit in reference order */
-	fputs("<section role=\"doc-endnotes\">\n<hr>\n<ol>\n", stdout);
+	fputs("<section role=\"doc-endnotes\">\n<hr>\n<ol>\n", output);
 	{
 		int num;
 		for (num = 1; num <= footnote_counter; num++) {
@@ -2789,7 +2791,7 @@ emit_endnotes(void)
 					break;
 			if (i >= nfootnotes) continue;
 
-			printf("<li id=\"fn%d\">\n", num);
+			fprintf(output, "<li id=\"fn%d\">\n", num);
 			if (footnotes[i].contentlen > 0) {
 				const char *fc = footnotes[i].content;
 				int fcl = footnotes[i].contentlen;
@@ -2831,33 +2833,83 @@ emit_endnotes(void)
 							last_is_block = 1;
 						if (last_is_block) {
 							process(lastpara, fc + fcl, 1);
-							printf("<p><a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a></p>\n", num);
+							fprintf(output, "<p><a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a></p>\n", num);
 						} else {
 							/* last paragraph: emit inline with backlink */
 							const char *pe = trim_end(lastpara, fc + fcl);
 							while (lastpara < pe && (*lastpara == ' ' || *lastpara == '\t'))
 								lastpara++;
-							fputs("<p>", stdout);
+							fputs("<p>", output);
 							process(lastpara, pe, 0);
-							printf("<a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>", num);
-							fputs("</p>\n", stdout);
+							fprintf(output, "<a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>", num);
+							fputs("</p>\n", output);
 						}
 						in_container = save_cont;
 					}
 				} else {
-					fputs("<p>", stdout);
+					fputs("<p>", output);
 					process(footnotes[i].content,
 					    footnotes[i].content + footnotes[i].contentlen, 0);
-					printf("<a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>", num);
-					fputs("</p>\n", stdout);
+					fprintf(output, "<a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>", num);
+					fputs("</p>\n", output);
 				}
 			} else {
-				printf("<p><a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a></p>\n", num);
+				fprintf(output, "<p><a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a></p>\n", num);
 			}
-			fputs("</li>\n", stdout);
+			fputs("</li>\n", output);
 		}
 	}
-	fputs("</ol>\n</section>\n", stdout);
+	fputs("</ol>\n</section>\n", output);
+}
+
+int
+cdjot_convert(FILE *out, const char *buf, int len)
+{
+	int i;
+
+	output = out;
+
+	/* init state */
+	refs = NULL; nrefs = 0; cap_refs = 0;
+	footnotes = NULL; nfootnotes = 0; cap_fn = 0;
+	footnote_counter = 0;
+	nsections = 0;
+	in_container = 0;
+	tight = 0;
+	proc_base = NULL;
+	used_ids = NULL; nused_ids = 0; cap_ids = 0;
+
+	cap_pid = cap_pcls = cap_pattr = 16;
+	pending_id = malloc(cap_pid);
+	pending_class = malloc(cap_pcls);
+	pending_attrs = malloc(cap_pattr);
+	if (!pending_id || !pending_class || !pending_attrs) die("malloc");
+	pending_id[0] = pending_class[0] = pending_attrs[0] = '\0';
+
+	prescan(buf, buf + len);
+	process(buf, buf + len, 1);
+
+	close_sections(0);
+	emit_endnotes();
+
+	for (i = 0; i < nrefs; i++)
+		free((char *)refs[i].url);
+	free(refs);
+	for (i = 0; i < nfootnotes; i++)
+		free(footnotes[i].content);
+	free(footnotes);
+	for (i = 0; i < nused_ids; i++)
+		free(used_ids[i]);
+	free(used_ids);
+	free(pending_id);
+	free(pending_class);
+	free(pending_attrs);
+
+	refs = NULL; footnotes = NULL; used_ids = NULL;
+	pending_id = pending_class = pending_attrs = NULL;
+	output = NULL;
+
+	return 0;
 }
 
 int
@@ -2867,13 +2919,6 @@ main(void)
 	int len = 0, cap = 0;
 	int n;
 
-	cap_pid = cap_pcls = cap_pattr = 16;
-	pending_id = malloc(cap_pid);
-	pending_class = malloc(cap_pcls);
-	pending_attrs = malloc(cap_pattr);
-	if (!pending_id || !pending_class || !pending_attrs) die("malloc");
-	pending_id[0] = pending_class[0] = pending_attrs[0] = '\0';
-
 	do {
 		cap += BUFSIZ;
 		buf = realloc(buf, cap);
@@ -2882,24 +2927,7 @@ main(void)
 		len += n;
 	} while (n > 0);
 
-	prescan(buf, buf + len);
-	process(buf, buf + len, 1);
-
-	close_sections(0);
-	emit_endnotes();
-
+	cdjot_convert(stdout, buf, len);
 	free(buf);
-	for (n = 0; n < nrefs; n++)
-		free((char *)refs[n].url);
-	free(refs);
-	for (n = 0; n < nfootnotes; n++)
-		free(footnotes[n].content);
-	free(footnotes);
-	for (n = 0; n < nused_ids; n++)
-		free(used_ids[n]);
-	free(used_ids);
-	free(pending_id);
-	free(pending_class);
-	free(pending_attrs);
 	return 0;
 }
