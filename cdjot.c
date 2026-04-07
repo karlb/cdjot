@@ -272,11 +272,11 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 {
 	const char *p = b;
 	int idn = 0, cn = 0, en = 0;
-	/* upper bound: input size * 3 covers &quot; expansion + separators */
-	int sz = (e - b) * 3 + 16;
-	char *id = malloc(sz);
-	char *cls = malloc(sz);
-	char *extra = malloc(sz);
+	int len = e - b;
+	/* id/class need at most input length; extra needs more for &quot; expansion */
+	char *id = malloc(len + 1);
+	char *cls = malloc(len + 1);
+	char *extra = malloc(len * 6 + 16);
 
 	if (!id || !cls || !extra) die("malloc");
 	id[0] = cls[0] = extra[0] = '\0';
