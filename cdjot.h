@@ -6,6 +6,7 @@
 /*
  * Convert djot markup to HTML.
  * Reads len bytes from buf, writes HTML to out.
+ * buf must remain valid for the duration of the call.
  * Not thread-safe; safe to call multiple times sequentially.
  * Returns 0 on success.
  */
