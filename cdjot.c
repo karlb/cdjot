@@ -13,6 +13,10 @@
 #define GROWBUF(b,len,cap,need) do { if ((len)+(need)>(cap)) { \
 	(cap) = ((cap)+(need)) * 2; (b) = realloc((b), (cap)); \
 	if (!(b)) die("malloc"); } } while(0)
+#define GROWA(arr,n,cap) do { if ((n) >= (cap)) { \
+	(cap) = (cap) ? (cap) * 2 : 16; \
+	(arr) = realloc((arr), (cap) * sizeof(*(arr))); \
+	if (!(arr)) die("malloc"); } } while(0)
 
 typedef int (*Parser)(const char *, const char *, int);
 
@@ -46,21 +50,20 @@ static Parser parsers[] = {
 	dolinebreak, docode, dosurround, dolink, doautolink, doreplace,
 };
 
-/* Fixed-size limits — silently truncated if exceeded */
 static struct {
 	const char *label; int labellen;
 	const char *url; int urllen;
 	char attrs[128];
-} refs[128];                    /* max reference definitions */
-static int nrefs;
+} *refs;
+static int nrefs, caprefs;
 
 static struct {
 	const char *label; int labellen;
 	char *content; int contentlen;
 	int used;
 	int num; /* sequential number assigned on first reference */
-} footnotes[64];                /* max footnote definitions */
-static int nfootnotes;
+} *footnotes;
+static int nfootnotes, capfn;
 static int footnote_counter;
 
 static int sections[6], nsections;
@@ -68,12 +71,12 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
-static char pending_id[128];   /* max id length */
-static char pending_class[128];/* max combined class length */
-static char pending_attrs[256];/* max key=val attributes length */
+static char pending_id[128];
+static char pending_class[128];
+static char pending_attrs[256];
 
-static char *used_ids[256];    /* max unique heading ids */
-static int nused_ids;
+static char **used_ids;
+static int nused_ids, capids;
 
 static void
 die(const char *msg)
@@ -370,9 +373,12 @@ dedup_id(char *id, int sz)
 		if (strcmp(used_ids[i], id) == 0)
 			goto dup;
 	/* not a dup — record it */
-	if (nused_ids < (int)LEN(used_ids)) {
+	{
 		char *s = malloc(strlen(id)+1);
-		if (s) used_ids[nused_ids++] = strcpy(s, id);
+		if (s) {
+			GROWA(used_ids, nused_ids, capids);
+			used_ids[nused_ids++] = strcpy(s, id);
+		}
 	}
 	return;
 dup:
@@ -383,9 +389,12 @@ dup:
 				goto next;
 		/* found unique */
 		snprintf(id, sz, "%s", buf);
-		if (nused_ids < (int)LEN(used_ids)) {
+		{
 			char *s = malloc(strlen(id)+1);
-			if (s) used_ids[nused_ids++] = strcpy(s, id);
+			if (s) {
+				GROWA(used_ids, nused_ids, capids);
+				used_ids[nused_ids++] = strcpy(s, id);
+			}
 		}
 		return;
 	next:;
@@ -2215,7 +2224,8 @@ dolink(const char *b, const char *e, int n)
 				}
 			}
 			/* if not found, create an empty footnote entry */
-			if (found < 0 && nfootnotes < (int)LEN(footnotes)) {
+			if (found < 0) {
+				GROWA(footnotes, nfootnotes, capfn);
 				found = nfootnotes;
 				footnotes[found].label = fl;
 				footnotes[found].labellen = fe - fl;
@@ -2609,7 +2619,8 @@ prescan(const char *b, const char *e)
 				}
 				while (fni > 0 && fnbuf[fni-1] == '\n') fni--;
 				ADDC(fnbuf, fni) = '\0';
-				if (ll > 0 && nfootnotes < (int)LEN(footnotes)) {
+				if (ll > 0) {
+					GROWA(footnotes, nfootnotes, capfn);
 					footnotes[nfootnotes].label = fl;
 					footnotes[nfootnotes].labellen = ll;
 					footnotes[nfootnotes].content = fnbuf;
@@ -2650,7 +2661,8 @@ prescan(const char *b, const char *e)
 						urlbuf_add(nextline + ns, le);
 						nextline = le;
 					}
-					if (labellen > 0 && nrefs < (int)LEN(refs)) {
+					if (labellen > 0) {
+						GROWA(refs, nrefs, caprefs);
 						char *u = malloc(urlbuflen + 1);
 						if (u) {
 							memcpy(u, urlbuf, urlbuflen);
@@ -2696,7 +2708,7 @@ prescan(const char *b, const char *e)
 	/* register heading auto-refs (skipping headings with explicit refs) */
 	{
 		int hi;
-		for (hi = 0; hi < nhdefs && nrefs < (int)LEN(refs); hi++) {
+		for (hi = 0; hi < nhdefs; hi++) {
 			if (findref(hdefs[hi].content, hdefs[hi].len,
 			    &(const char *){0}, &(int){0}))
 				continue;
@@ -2722,10 +2734,12 @@ prescan(const char *b, const char *e)
 					u[0] = '#';
 					memcpy(u + 1, idbuf, idn);
 					u[ulen] = '\0';
+					GROWA(refs, nrefs, caprefs);
 					refs[nrefs].label = hdefs[hi].content;
 					refs[nrefs].labellen = hdefs[hi].len;
 					refs[nrefs].url = u;
 					refs[nrefs].urllen = ulen;
+					refs[nrefs].attrs[0] = '\0';
 					nrefs++;
 				}
 			}
@@ -2847,9 +2861,12 @@ main(void)
 	free(buf);
 	for (n = 0; n < nrefs; n++)
 		free((char *)refs[n].url);
+	free(refs);
 	for (n = 0; n < nfootnotes; n++)
 		free(footnotes[n].content);
+	free(footnotes);
 	for (n = 0; n < nused_ids; n++)
 		free(used_ids[n]);
+	free(used_ids);
 	return 0;
 }
