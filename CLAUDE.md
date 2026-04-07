@@ -13,12 +13,12 @@ make            # build
 make test       # run test suite (258 tests from jgm/djot.js)
 VERBOSE=1 sh test.sh          # show diff on failures
 VERBOSE=1 sh test.sh emphasis # run one category
-printf '# hi\n' | ./djot      # manual test
+printf '# hi\n' | ./cdjot     # manual test
 ```
 
 ## Architecture
 
-`djot.c` (~2000 lines) follows smu's recursive dispatch pattern:
+`cdjot.c` (~2000 lines) follows smu's recursive dispatch pattern:
 
 - **`process(begin, end, newblock)`** — central dispatcher. Tries each parser in order. `newblock=1` enables block parsers; `newblock=0` restricts to inline. Negative return = block consumed (sets newblock for next iteration), positive = inline consumed.
 - **Block parsers** (fire when newblock=1): `doattr`, `dorefdef`, `doheading`, `doblockquote`, `docodefence`, `dodiv`, `dothematicbreak`, `dotable`, `dodeflist`, `dolist`, `doparagraph`

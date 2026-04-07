@@ -77,7 +77,7 @@ $line"
 				if [ "$clen" -ge "$fmarklen" ]; then
 					testnum=$((testnum + 1))
 					total=$((total + 1))
-					got=$(printf '%s\n' "$input" | ./djot)
+					got=$(printf '%s\n' "$input" | ./cdjot)
 					if [ "$got" = "$expected" ]; then
 						pass=$((pass + 1))
 					else

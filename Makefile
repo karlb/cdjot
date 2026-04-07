@@ -3,19 +3,19 @@ PREFIX = /usr/local
 CFLAGS = -std=c99 -Wall -Wextra -pedantic -Os
 LDFLAGS =
 
-djot: djot.c
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ djot.c
+cdjot: cdjot.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cdjot.c
 
 clean:
-	rm -f djot
+	rm -f cdjot
 
-test: djot
+test: cdjot
 	sh test.sh
 
-install: djot
-	install -Dm755 djot $(DESTDIR)$(PREFIX)/bin/djot
+install: cdjot
+	install -Dm755 cdjot $(DESTDIR)$(PREFIX)/bin/cdjot
 
-bench: djot
+bench: cdjot
 	sh bench.sh
 
 .PHONY: clean test install bench

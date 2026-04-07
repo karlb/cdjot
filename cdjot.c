@@ -1,4 +1,4 @@
-/* djot - djot to HTML converter
+/* cdjot - djot to HTML converter
  * Reads djot from stdin, writes HTML to stdout.
  * No dependencies beyond libc.
  */
@@ -73,7 +73,7 @@ static int nused_ids;
 static void
 die(const char *msg)
 {
-	fprintf(stderr, "djot: %s\n", msg);
+	fprintf(stderr, "cdjot: %s\n", msg);
 	exit(1);
 }
 
