@@ -10,6 +10,9 @@
 #define LEN(x) (sizeof(x)/sizeof(x[0]))
 #define ADDC(b,i) do { if ((i) % BUFSIZ == 0) { \
 	b = realloc(b, ((i) + BUFSIZ)); if (!b) die("malloc"); } } while(0); b[i]
+#define GROWBUF(b,len,cap,need) do { if ((len)+(need)>(cap)) { \
+	(cap) = ((cap)+(need)) * 2; (b) = realloc((b), (cap)); \
+	if (!(b)) die("malloc"); } } while(0)
 
 typedef int (*Parser)(const char *, const char *, int);
 
@@ -35,6 +38,7 @@ static void hprint(const char *b, const char *e);
 static void clear_pending(void);
 static int has_pending(void);
 static void emit_attrs(const char *id, const char *cls, const char *extra);
+static void emit_pending(void);
 
 static Parser parsers[] = {
 	doattr, dorefdef, doheading, doblockquote, docodefence, dodiv,
@@ -327,10 +331,7 @@ static void
 emit_code_open(const char *info, const char *infoend)
 {
 	fputs("<pre", stdout);
-	if (has_pending()) {
-		emit_attrs(pending_id, pending_class, pending_attrs);
-		clear_pending();
-	}
+	emit_pending();
 	if (info < infoend) {
 		fputs("><code class=\"language-", stdout);
 		hprint(info, infoend);
@@ -398,6 +399,15 @@ static int
 has_pending(void)
 {
 	return pending_id[0] || pending_class[0] || pending_attrs[0];
+}
+
+static void
+emit_pending(void)
+{
+	if (has_pending()) {
+		emit_attrs(pending_id, pending_class, pending_attrs);
+		clear_pending();
+	}
 }
 
 /* find next unescaped | that's not inside a backtick span */
@@ -1059,10 +1069,7 @@ doblockquote(const char *b, const char *e, int n)
 		int save = in_container;
 		in_container = 1;
 		fputs("<blockquote", stdout);
-		if (has_pending()) {
-			emit_attrs(pending_id, pending_class, pending_attrs);
-			clear_pending();
-		}
+		emit_pending();
 		fputs(">\n", stdout);
 		process(buf, buf + i, 1);
 		fputs("</blockquote>\n", stdout);
@@ -1163,10 +1170,7 @@ dothematicbreak(const char *b, const char *e, int n)
 	}
 	if (count < 3) return 0;
 	fputs("<hr", stdout);
-	if (has_pending()) {
-		emit_attrs(pending_id, pending_class, pending_attrs);
-		clear_pending();
-	}
+	emit_pending();
 	fputs(">\n", stdout);
 	return -(eol(b, e) - b);
 }
@@ -1398,10 +1402,7 @@ dolist(const char *b, const char *e, int n)
 		fputs("<ol", stdout);
 		if (start_num != 1) printf(" start=\"%d\"", start_num);
 		fputs(typattr[style], stdout);
-		if (has_pending()) {
-			emit_attrs(pending_id, pending_class, pending_attrs);
-			clear_pending();
-		}
+		emit_pending();
 		fputs(">\n", stdout);
 	}
 
@@ -1656,15 +1657,16 @@ doparagraph(const char *b, const char *e, int n)
 
 	/* pre-process: transform word{attrs} into [word]{attrs} */
 	{
-		char *nbuf = NULL;
-		int nlen = 0, ncap = 0;
+		int ncap = (p - b) + 64;
+		char *nbuf = malloc(ncap);
+		int nlen = 0;
 		const char *s = b;
 		int transformed = 0;
 
+		if (!nbuf) die("malloc");
 		while (s < p) {
 			if (*s == '\\' && s + 1 < p) {
-				/* copy escape + next char */
-				if (nlen + 2 > ncap) { ncap = (ncap + 2) * 2; nbuf = realloc(nbuf, ncap); }
+				GROWBUF(nbuf, nlen, ncap, 2);
 				nbuf[nlen++] = *s++;
 				nbuf[nlen++] = *s++;
 				continue;
@@ -1680,7 +1682,7 @@ doparagraph(const char *b, const char *e, int n)
 					q++;
 				}
 				while (s < q) {
-					if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+					GROWBUF(nbuf, nlen, ncap, 1);
 					nbuf[nlen++] = *s++;
 				}
 				continue;
@@ -1741,38 +1743,34 @@ doparagraph(const char *b, const char *e, int n)
 								        || nbuf[wstart-1] == '_')))
 									wstart--;
 								/* insert [ before word */
-								if (nlen + 2 > ncap) {
-									ncap = (ncap + 2) * 2;
-									nbuf = realloc(nbuf, ncap);
-								}
+								GROWBUF(nbuf, nlen, ncap, 2);
 								memmove(nbuf + wstart + 1, nbuf + wstart, nlen - wstart);
 								nbuf[wstart] = '[';
 								nlen++;
 								/* add ] before {attrs} */
-								if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+								GROWBUF(nbuf, nlen, ncap, 1);
 								nbuf[nlen++] = ']';
 								/* copy {attrs}, escaping unescaped * and _ in quoted values */
 								while (s <= q) {
 									if (*s == '"' && s > b && s < q) {
-										if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+										GROWBUF(nbuf, nlen, ncap, 1);
 										nbuf[nlen++] = *s++;
 										while (s < q && *s != '"') {
 											if (*s == '\\' && s + 1 < q) {
-												/* already escaped — copy as-is */
-												if (nlen + 1 >= ncap) { ncap = (ncap + 2) * 2; nbuf = realloc(nbuf, ncap); }
+												GROWBUF(nbuf, nlen, ncap, 2);
 												nbuf[nlen++] = *s++;
 												nbuf[nlen++] = *s++;
 												continue;
 											}
 											if (*s == '*' || *s == '_') {
-												if (nlen + 1 >= ncap) { ncap = (ncap + 2) * 2; nbuf = realloc(nbuf, ncap); }
+												GROWBUF(nbuf, nlen, ncap, 2);
 												nbuf[nlen++] = '\\';
 											}
-											if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+											GROWBUF(nbuf, nlen, ncap, 1);
 											nbuf[nlen++] = *s++;
 										}
 									}
-									if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+									GROWBUF(nbuf, nlen, ncap, 1);
 									nbuf[nlen++] = *s++;
 								}
 							} else {
@@ -1785,7 +1783,7 @@ doparagraph(const char *b, const char *e, int n)
 						/* not valid attrs — copy {..} literally to prevent
 						 * smart replacement of contents (e.g. -- in {1--}) */
 						while (s <= q) {
-							if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+							GROWBUF(nbuf, nlen, ncap, 1);
 							nbuf[nlen++] = *s++;
 						}
 						transformed = 1;
@@ -1794,7 +1792,7 @@ doparagraph(const char *b, const char *e, int n)
 				}
 			}
 		copy_char:
-			if (nlen >= ncap) { ncap = (ncap + 1) * 2; nbuf = realloc(nbuf, ncap); }
+			GROWBUF(nbuf, nlen, ncap, 1);
 			nbuf[nlen++] = *s++;
 		}
 
@@ -1938,6 +1936,26 @@ docode(const char *b, const char *e, int n)
 	return e - start;
 }
 
+static const struct { char ch; const char *open, *close; } surround_tags[] = {
+	{'_', "<em>", "</em>"}, {'*', "<strong>", "</strong>"},
+	{'~', "<sub>", "</sub>"}, {'^', "<sup>", "</sup>"},
+	{'+', "<ins>", "</ins>"}, {'-', "<del>", "</del>"},
+	{'=', "<mark>", "</mark>"},
+};
+
+static void
+surround_lookup(char ch, const char **otag, const char **ctag)
+{
+	unsigned int i;
+	for (i = 0; i < LEN(surround_tags); i++)
+		if (surround_tags[i].ch == ch) {
+			*otag = surround_tags[i].open;
+			*ctag = surround_tags[i].close;
+			return;
+		}
+	*otag = "<em>"; *ctag = "</em>";
+}
+
 static int
 dosurround(const char *b, const char *e, int n)
 {
@@ -1979,14 +1997,14 @@ dosurround(const char *b, const char *e, int n)
 				if (crun >= run) {
 					char bb = (rp > b + run) ? rp[-1] : 0;
 					if (!isws(bb) && rp > b + run) {
+						const char *ot, *ct;
 						int j;
+						surround_lookup(ch, &ot, &ct);
 						for (j = 0; j < run; j++)
-							fputs(ch == '_' ? "<em>" : ch == '*' ? "<strong>"
-							    : ch == '~' ? "<sub>" : "<sup>", stdout);
+							fputs(ot, stdout);
 						process(b + run, rp, 0);
 						for (j = 0; j < run; j++)
-							fputs(ch == '_' ? "</em>" : ch == '*' ? "</strong>"
-							    : ch == '~' ? "</sub>" : "</sup>", stdout);
+							fputs(ct, stdout);
 						return rp + run - b;
 					}
 				}
@@ -2090,14 +2108,7 @@ dosurround(const char *b, const char *e, int n)
 			stop = p;
 			{
 				const char *otag, *ctag;
-				if (ch == '_')      { otag = "<em>"; ctag = "</em>"; }
-				else if (ch == '*') { otag = "<strong>"; ctag = "</strong>"; }
-				else if (ch == '~') { otag = "<sub>"; ctag = "</sub>"; }
-				else if (ch == '^') { otag = "<sup>"; ctag = "</sup>"; }
-				else if (ch == '+') { otag = "<ins>"; ctag = "</ins>"; }
-				else if (ch == '-') { otag = "<del>"; ctag = "</del>"; }
-				else if (ch == '=') { otag = "<mark>"; ctag = "</mark>"; }
-				else                { otag = "<em>"; ctag = "</em>"; }
+				surround_lookup(ch, &otag, &ctag);
 				fputs(otag, stdout);
 				process(start, stop, 0);
 				fputs(ctag, stdout);
@@ -2738,41 +2749,34 @@ emit_endnotes(void)
 
 			printf("<li id=\"fn%d\">\n", num);
 			if (footnotes[i].contentlen > 0) {
-				/* check if content has block elements (blank line or code fence) */
+				const char *fc = footnotes[i].content;
+				int fcl = footnotes[i].contentlen;
+				/* single scan: detect blocks and find last paragraph */
 				int has_blocks = 0;
+				const char *lastpara = fc;
 				{
 					const char *sp;
-					for (sp = footnotes[i].content; sp < footnotes[i].content + footnotes[i].contentlen; ) {
-						const char *le = eol(sp, footnotes[i].content + footnotes[i].contentlen);
-						if (isblankline(sp, le)) { has_blocks = 1; break; }
-						/* code fence? */
-						const char *tp = sp;
-						while (tp < le && *tp == ' ') tp++;
-						if (tp < le && (*tp == '`' || *tp == '~') && leadc(tp, le, *tp) >= 3)
-							{ has_blocks = 1; break; }
+					for (sp = fc; sp < fc + fcl; ) {
+						const char *le = eol(sp, fc + fcl);
+						if (isblankline(sp, le)) {
+							has_blocks = 1;
+							const char *after = skip_blanks(le, fc + fcl);
+							if (after < fc + fcl)
+								lastpara = after;
+						} else {
+							const char *tp = sp;
+							while (tp < le && *tp == ' ') tp++;
+							if (tp < le && (*tp == '`' || *tp == '~')
+							    && leadc(tp, le, *tp) >= 3)
+								has_blocks = 1;
+						}
 						sp = le;
 					}
 				}
 				if (has_blocks) {
-					/* find last paragraph in content and process in two parts:
-					 * everything before last para, then last para with backlink */
-					const char *fc = footnotes[i].content;
-					int fcl = footnotes[i].contentlen;
-					const char *lastpara = fc;
-					const char *sp;
-					/* find the start of the last paragraph */
-					for (sp = fc; sp < fc + fcl; ) {
-						const char *le = eol(sp, fc + fcl);
-						if (isblankline(sp, le)) {
-							const char *after = skip_blanks(le, fc + fcl);
-							if (after < fc + fcl)
-								lastpara = after;
-						}
-						sp = le;
-					}
+					int save_cont = in_container;
+					in_container = 1;
 					{
-						int save_cont = in_container;
-						in_container = 1;
 						/* emit everything before last paragraph */
 						if (lastpara > fc)
 							process(fc, lastpara, 1);
