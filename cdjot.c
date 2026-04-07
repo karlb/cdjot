@@ -1053,9 +1053,9 @@ doheading(const char *b, const char *e, int n)
 	{
 		char hid[256];
 		if (pending_id[0]) {
-			snprintf(hid, sizeof(hid), "%s", pending_id);
+			snprintf(hid, sizeof(hid) - 12, "%s", pending_id);
 		} else if (blen > 0) {
-			make_slug(buf, blen, hid, sizeof(hid));
+			make_slug(buf, blen, hid, sizeof(hid) - 12);
 		} else {
 			snprintf(hid, sizeof(hid), "s-%d", nsections + 1);
 		}
@@ -2966,6 +2966,11 @@ readall(FILE *f, int *outlen)
 		n = fread(buf + len, 1, cap - len, f);
 		len += n;
 	} while (n > 0);
+	if (ferror(f)) {
+		free(buf);
+		*outlen = 0;
+		return NULL;
+	}
 	*outlen = len;
 	return buf;
 }
@@ -3010,6 +3015,10 @@ main(int argc, char *argv[])
 		/* no file arguments: read stdin */
 		int len;
 		char *buf = readall(stdin, &len);
+		if (!buf) {
+			fprintf(stderr, "cdjot: read error\n");
+			return 1;
+		}
 		cdjot_convert(stdout, buf, len);
 		free(buf);
 	} else {
@@ -3031,6 +3040,11 @@ main(int argc, char *argv[])
 			buf = readall(source, &len);
 			if (source != stdin)
 				fclose(source);
+			if (!buf) {
+				fprintf(stderr, "cdjot: read error: '%s'\n", argv[i]);
+				ret = 1;
+				continue;
+			}
 			cdjot_convert(stdout, buf, len);
 			free(buf);
 		}
