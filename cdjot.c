@@ -71,9 +71,12 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
-static char pending_id[128];   /* max id length */
-static char pending_class[128];/* max combined class length */
-static char pending_attrs[256];/* max key=val attributes length */
+static char *pending_id;
+static int cap_pid;
+static char *pending_class;
+static int cap_pcls;
+static char *pending_attrs;
+static int cap_pattr;
 
 static char **used_ids;
 static int nused_ids, capids;
@@ -83,6 +86,37 @@ die(const char *msg)
 {
 	fprintf(stderr, "cdjot: %s\n", msg);
 	exit(1);
+}
+
+/* ensure *buf has room for at least `need` bytes */
+static void
+pensure(char **buf, int *cap, int need)
+{
+	if (need > *cap) {
+		*cap = need * 2;
+		*buf = realloc(*buf, *cap);
+		if (!*buf) die("malloc");
+	}
+}
+
+static void
+pset(char **buf, int *cap, const char *s)
+{
+	int len = strlen(s) + 1;
+	pensure(buf, cap, len);
+	memcpy(*buf, s, len);
+}
+
+/* append s to buf with space separator (for class lists) */
+static void
+pcat(char **buf, int *cap, const char *s)
+{
+	int cur = strlen(*buf);
+	int slen = strlen(s);
+	int sep = (cur > 0) ? 1 : 0;
+	pensure(buf, cap, cur + sep + slen + 1);
+	if (sep) (*buf)[cur++] = ' ';
+	memcpy(*buf + cur, s, slen + 1);
 }
 
 static void
@@ -809,11 +843,12 @@ done:
 		/* merge div class name into pending_class */
 		if (cls < clsend) {
 			int cn = strlen(pending_class);
-			if (cn > 0 && cn < (int)sizeof(pending_class) - 1)
-				pending_class[cn++] = ' ';
-			while (cls < clsend && cn < (int)sizeof(pending_class) - 1)
-				pending_class[cn++] = *cls++;
-			pending_class[cn] = '\0';
+			int add = clsend - cls;
+			int sep = (cn > 0) ? 1 : 0;
+			pensure(&pending_class, &cap_pcls, cn + sep + add + 1);
+			if (sep) pending_class[cn++] = ' ';
+			memcpy(pending_class + cn, cls, add);
+			pending_class[cn + add] = '\0';
 		}
 		fputs("<div", stdout);
 		emit_attrs(pending_id, pending_class, pending_attrs);
@@ -881,20 +916,11 @@ doattr(const char *b, const char *e, int n)
 			return 0;
 		/* merge into pending */
 		if (tid[0])
-			snprintf(pending_id, sizeof(pending_id), "%s", tid);
-		if (tcls[0]) {
-			if (pending_class[0]) {
-				int cn = strlen(pending_class);
-				snprintf(pending_class + cn, sizeof(pending_class) - cn,
-				    " %s", tcls);
-			} else {
-				snprintf(pending_class, sizeof(pending_class), "%s", tcls);
-			}
-		}
-		if (textra[0]) {
-			/* later key=val overrides earlier */
-			snprintf(pending_attrs, sizeof(pending_attrs), "%s", textra);
-		}
+			pset(&pending_id, &cap_pid, tid);
+		if (tcls[0])
+			pcat(&pending_class, &cap_pcls, tcls);
+		if (textra[0])
+			pset(&pending_attrs, &cap_pattr, textra);
 	}
 	/* consume up to and including the line containing } */
 	return -(eol(q, e) - b);
@@ -1394,12 +1420,11 @@ dolist(const char *b, const char *e, int n)
 		if (is_task) {
 			if (pending_class[0]) {
 				int cn = strlen(pending_class);
-				if (cn + 10 < (int)sizeof(pending_class)) {
-					memmove(pending_class + 10, pending_class, cn + 1);
-					memcpy(pending_class, "task-list ", 10);
-				}
+				pensure(&pending_class, &cap_pcls, cn + 11);
+				memmove(pending_class + 10, pending_class, cn + 1);
+				memcpy(pending_class, "task-list ", 10);
 			} else {
-				snprintf(pending_class, sizeof(pending_class), "task-list");
+				pset(&pending_class, &cap_pcls, "task-list");
 			}
 		}
 		fputs("<ul", stdout);
@@ -1812,7 +1837,7 @@ doparagraph(const char *b, const char *e, int n)
 			fputs("<p", stdout);
 			if (has_pending()) {
 				if (pending_id[0])
-					dedup_id(pending_id, sizeof(pending_id));
+					dedup_id(pending_id, cap_pid);
 				emit_attrs(pending_id, pending_class, pending_attrs);
 			}
 			clear_pending();
@@ -2842,6 +2867,13 @@ main(void)
 	int len = 0, cap = 0;
 	int n;
 
+	cap_pid = cap_pcls = cap_pattr = 16;
+	pending_id = malloc(cap_pid);
+	pending_class = malloc(cap_pcls);
+	pending_attrs = malloc(cap_pattr);
+	if (!pending_id || !pending_class || !pending_attrs) die("malloc");
+	pending_id[0] = pending_class[0] = pending_attrs[0] = '\0';
+
 	do {
 		cap += BUFSIZ;
 		buf = realloc(buf, cap);
@@ -2866,5 +2898,8 @@ main(void)
 	for (n = 0; n < nused_ids; n++)
 		free(used_ids[n]);
 	free(used_ids);
+	free(pending_id);
+	free(pending_class);
+	free(pending_attrs);
 	return 0;
 }
