@@ -1662,149 +1662,143 @@ doparagraph(const char *b, const char *e, int n)
 
 	/* pre-process: transform word{attrs} into [word]{attrs} */
 	{
-		char *nbuf = NULL;
+		int ncap = (p - b) + 64;
+		char *nbuf = malloc(ncap);
 		int nlen = 0;
-		const char *pb = b, *pe = p;
+		const char *s = b;
+		int transformed = 0;
 
-		if (memchr(b, '{', p - b)) {
-			int ncap = (p - b) + 64;
-			const char *s = b;
-			int transformed = 0;
-
-			nbuf = malloc(ncap);
-			if (!nbuf) die("malloc");
-			while (s < p) {
-				if (*s == '\\' && s + 1 < p) {
-					GROWBUF(nbuf, nlen, ncap, 2);
-					nbuf[nlen++] = *s++;
-					nbuf[nlen++] = *s++;
-					continue;
-				}
-				if (*s == '`') {
-					/* skip code spans */
-					int cnt = leadc(s, p, '`');
-					const char *q = s + cnt;
-					while (q < p) {
-						if (*q == '`' && leadc(q, p, '`') == cnt) {
-							q += cnt; break;
-						}
-						q++;
+		if (!nbuf) die("malloc");
+		while (s < p) {
+			if (*s == '\\' && s + 1 < p) {
+				GROWBUF(nbuf, nlen, ncap, 2);
+				nbuf[nlen++] = *s++;
+				nbuf[nlen++] = *s++;
+				continue;
+			}
+			if (*s == '`') {
+				/* skip code spans */
+				int cnt = leadc(s, p, '`');
+				const char *q = s + cnt;
+				while (q < p) {
+					if (*q == '`' && leadc(q, p, '`') == cnt) {
+						q += cnt; break;
 					}
-					while (s < q) {
-						GROWBUF(nbuf, nlen, ncap, 1);
-						nbuf[nlen++] = *s++;
-					}
-					continue;
+					q++;
 				}
-				if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
-					int preceded_by_word = (s > b && s[-1] != ' ' && s[-1] != '\n'
-					    && s[-1] != '\t');
-					/* skip known {X openers (emphasis, quotes) */
-					if (s + 1 < p && (s[1] == '_' || s[1] == '*' || s[1] == '~'
-					    || s[1] == '^' || s[1] == '+' || s[1] == '-' || s[1] == '='
-					    || s[1] == '\'' || s[1] == '"'))
-						goto copy_char;
-					/* find matching } (handles quotes and escapes) */
-					{
-						const char *q = s + 1;
-						while (q < p && *q != '}') {
-							if (*q == '\\' && q + 1 < p) q += 2;
-							else if (*q == '"') {
-								q++;
-								while (q < p && *q != '"') {
-									if (*q == '\\' && q + 1 < p) q += 2;
-									else q++;
-								}
-								if (q < p) q++;
-							} else q++;
-						}
-						if (q < p && *q == '}') {
-							/* validate attrs */
-							char tid[128], tcls[128], textra[256];
-							int valid = parse_attrs(s + 1, q, tid, sizeof(tid),
-							    tcls, sizeof(tcls), textra, sizeof(textra))
-							    || (q == s + 1); /* empty {} */
-							if (valid) {
-								if (q == s + 1) {
-									/* {} — consume silently */
-									s = q + 1;
-									transformed = 1;
-									continue;
-								}
-								if (preceded_by_word) {
-									/* find word start — stop at space, tags, quotes,
-									 * and emphasis delimiters if they have a matching closer */
-									int stop_at_emph = 0;
-									{
-										const char *r = q + 1;
-										while (r < p && (*r == ' ' || *r == '\t')) r++;
-										if (r < p && (*r == '*' || *r == '_'))
-											stop_at_emph = 1;
-									}
-									int wstart = nlen;
-									while (wstart > 0
-									    && nbuf[wstart-1] != ' '
-									    && nbuf[wstart-1] != '\n'
-									    && nbuf[wstart-1] != '\t'
-									    && nbuf[wstart-1] != '>'
-									    && nbuf[wstart-1] != '"'
-									    && !(stop_at_emph && (nbuf[wstart-1] == '*'
-									        || nbuf[wstart-1] == '_')))
-										wstart--;
-									/* insert [ before word */
-									GROWBUF(nbuf, nlen, ncap, 2);
-									memmove(nbuf + wstart + 1, nbuf + wstart, nlen - wstart);
-									nbuf[wstart] = '[';
-									nlen++;
-									/* add ] before {attrs} */
-									GROWBUF(nbuf, nlen, ncap, 1);
-									nbuf[nlen++] = ']';
-									/* copy {attrs}, escaping unescaped * and _ in quoted values */
-									while (s <= q) {
-										if (*s == '"' && s > b && s < q) {
-											GROWBUF(nbuf, nlen, ncap, 1);
-											nbuf[nlen++] = *s++;
-											while (s < q && *s != '"') {
-												if (*s == '\\' && s + 1 < q) {
-													GROWBUF(nbuf, nlen, ncap, 2);
-													nbuf[nlen++] = *s++;
-													nbuf[nlen++] = *s++;
-													continue;
-												}
-												if (*s == '*' || *s == '_') {
-													GROWBUF(nbuf, nlen, ncap, 2);
-													nbuf[nlen++] = '\\';
-												}
-												GROWBUF(nbuf, nlen, ncap, 1);
-												nbuf[nlen++] = *s++;
-											}
-										}
-										GROWBUF(nbuf, nlen, ncap, 1);
-										nbuf[nlen++] = *s++;
-									}
-								} else {
-									/* attrs preceded by space/start — consume silently */
-									s = q + 1;
-								}
+				while (s < q) {
+					GROWBUF(nbuf, nlen, ncap, 1);
+					nbuf[nlen++] = *s++;
+				}
+				continue;
+			}
+			if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
+				int preceded_by_word = (s > b && s[-1] != ' ' && s[-1] != '\n'
+				    && s[-1] != '\t');
+				/* skip known {X openers (emphasis, quotes) */
+				if (s + 1 < p && (s[1] == '_' || s[1] == '*' || s[1] == '~'
+				    || s[1] == '^' || s[1] == '+' || s[1] == '-' || s[1] == '='
+				    || s[1] == '\'' || s[1] == '"'))
+					goto copy_char;
+				/* find matching } (handles quotes and escapes) */
+				{
+					const char *q = s + 1;
+					while (q < p && *q != '}') {
+						if (*q == '\\' && q + 1 < p) q += 2;
+						else if (*q == '"') {
+							q++;
+							while (q < p && *q != '"') {
+								if (*q == '\\' && q + 1 < p) q += 2;
+								else q++;
+							}
+							if (q < p) q++;
+						} else q++;
+					}
+					if (q < p && *q == '}') {
+						/* validate attrs */
+						char tid[128], tcls[128], textra[256];
+						int valid = parse_attrs(s + 1, q, tid, sizeof(tid),
+						    tcls, sizeof(tcls), textra, sizeof(textra))
+						    || (q == s + 1); /* empty {} */
+						if (valid) {
+							if (q == s + 1) {
+								/* {} — consume silently */
+								s = q + 1;
 								transformed = 1;
 								continue;
 							}
-							/* not valid attrs — copy {..} literally to prevent
-							 * smart replacement of contents (e.g. -- in {1--}) */
-							while (s <= q) {
+							if (preceded_by_word) {
+								/* find word start — stop at space, tags, quotes,
+								 * and emphasis delimiters if they have a matching closer */
+								int stop_at_emph = 0;
+								{
+									const char *r = q + 1;
+									while (r < p && (*r == ' ' || *r == '\t')) r++;
+									if (r < p && (*r == '*' || *r == '_'))
+										stop_at_emph = 1;
+								}
+								int wstart = nlen;
+								while (wstart > 0
+								    && nbuf[wstart-1] != ' '
+								    && nbuf[wstart-1] != '\n'
+								    && nbuf[wstart-1] != '\t'
+								    && nbuf[wstart-1] != '>'
+								    && nbuf[wstart-1] != '"'
+								    && !(stop_at_emph && (nbuf[wstart-1] == '*'
+								        || nbuf[wstart-1] == '_')))
+									wstart--;
+								/* insert [ before word */
+								GROWBUF(nbuf, nlen, ncap, 2);
+								memmove(nbuf + wstart + 1, nbuf + wstart, nlen - wstart);
+								nbuf[wstart] = '[';
+								nlen++;
+								/* add ] before {attrs} */
 								GROWBUF(nbuf, nlen, ncap, 1);
-								nbuf[nlen++] = *s++;
+								nbuf[nlen++] = ']';
+								/* copy {attrs}, escaping unescaped * and _ in quoted values */
+								while (s <= q) {
+									if (*s == '"' && s > b && s < q) {
+										GROWBUF(nbuf, nlen, ncap, 1);
+										nbuf[nlen++] = *s++;
+										while (s < q && *s != '"') {
+											if (*s == '\\' && s + 1 < q) {
+												GROWBUF(nbuf, nlen, ncap, 2);
+												nbuf[nlen++] = *s++;
+												nbuf[nlen++] = *s++;
+												continue;
+											}
+											if (*s == '*' || *s == '_') {
+												GROWBUF(nbuf, nlen, ncap, 2);
+												nbuf[nlen++] = '\\';
+											}
+											GROWBUF(nbuf, nlen, ncap, 1);
+											nbuf[nlen++] = *s++;
+										}
+									}
+									GROWBUF(nbuf, nlen, ncap, 1);
+									nbuf[nlen++] = *s++;
+								}
+							} else {
+								/* attrs preceded by space/start — consume silently */
+								s = q + 1;
 							}
 							transformed = 1;
 							continue;
 						}
+						/* not valid attrs — copy {..} literally to prevent
+						 * smart replacement of contents (e.g. -- in {1--}) */
+						while (s <= q) {
+							GROWBUF(nbuf, nlen, ncap, 1);
+							nbuf[nlen++] = *s++;
+						}
+						transformed = 1;
+						continue;
 					}
 				}
-			copy_char:
-				GROWBUF(nbuf, nlen, ncap, 1);
-				nbuf[nlen++] = *s++;
 			}
-			if (transformed) { pb = nbuf; pe = nbuf + nlen; }
+		copy_char:
+			GROWBUF(nbuf, nlen, ncap, 1);
+			nbuf[nlen++] = *s++;
 		}
 
 		if (!tight) {
@@ -1817,7 +1811,11 @@ doparagraph(const char *b, const char *e, int n)
 			clear_pending();
 			fputc('>', stdout);
 		}
-		process(pb, pe, 0);
+		if (transformed) {
+			process(nbuf, nbuf + nlen, 0);
+		} else {
+			process(b, p, 0);
+		}
 		free(nbuf);
 	}
 	if (!tight) fputs("</p>", stdout);
