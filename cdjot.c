@@ -2665,6 +2665,7 @@ prescan(const char *b, const char *e)
 				}
 				while (fni > 0 && fnbuf[fni-1] == '\n') fni--;
 				ADDC(fnbuf, fni) = '\0';
+				fnbuf = realloc(fnbuf, fni + 1);
 				if (ll > 0) {
 					GROWA(footnotes, nfootnotes, cap_fn);
 					footnotes[nfootnotes].label = fl;
