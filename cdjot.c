@@ -71,9 +71,9 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
-static char pending_id[128];
-static char pending_class[128];
-static char pending_attrs[256];
+static char pending_id[128];   /* max id length */
+static char pending_class[128];/* max combined class length */
+static char pending_attrs[256];/* max key=val attributes length */
 
 static char **used_ids;
 static int nused_ids, capids;
@@ -373,12 +373,11 @@ dedup_id(char *id, int sz)
 		if (strcmp(used_ids[i], id) == 0)
 			goto dup;
 	/* not a dup — record it */
+	GROWA(used_ids, nused_ids, capids);
 	{
 		char *s = malloc(strlen(id)+1);
-		if (s) {
-			GROWA(used_ids, nused_ids, capids);
+		if (s)
 			used_ids[nused_ids++] = strcpy(s, id);
-		}
 	}
 	return;
 dup:
@@ -389,12 +388,11 @@ dup:
 				goto next;
 		/* found unique */
 		snprintf(id, sz, "%s", buf);
+		GROWA(used_ids, nused_ids, capids);
 		{
 			char *s = malloc(strlen(id)+1);
-			if (s) {
-				GROWA(used_ids, nused_ids, capids);
+			if (s)
 				used_ids[nused_ids++] = strcpy(s, id);
-			}
 		}
 		return;
 	next:;
