@@ -109,11 +109,12 @@ pset(char **buf, int *cap, const char *s)
 	memcpy(*buf, s, len);
 }
 
-/* append s to buf with space separator (for class lists) */
+/* append s to buf with space separator (for class lists).
+ * buf must be non-NULL and NUL-terminated. */
 static void
 pcat(char **buf, int *cap, const char *s)
 {
-	int cur = strlen(*buf);
+	int cur = *buf ? strlen(*buf) : 0;
 	int slen = strlen(s);
 	int sep = (cur > 0) ? 1 : 0;
 	pensure(buf, cap, cur + sep + slen + 1);
