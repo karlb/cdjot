@@ -90,7 +90,8 @@ die(const char *msg)
 	exit(1);
 }
 
-/* ensure *buf has room for at least `need` bytes */
+/* ensure *buf has room for at least `need` bytes.
+ * *buf may be NULL (realloc handles it); caller must NUL-terminate after use. */
 static void
 pensure(char **buf, int *cap, int need)
 {
