@@ -54,7 +54,7 @@ static Parser parsers[] = {
 static struct {
 	const char *label; int labellen;
 	const char *url; int urllen;
-	char attrs[128];
+	char *attrs;
 } *refs;
 static int nrefs, cap_refs;
 
@@ -265,15 +265,18 @@ close_sections(int level)
 }
 
 static int
-parse_attrs(const char *b, const char *e, char *id, int idsz,
-    char *cls, int clssz, char *extra, int exsz)
+parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap)
 {
 	const char *p = b;
 	int idn = 0, cn = 0, en = 0;
+	/* upper bound: input size * 3 covers &quot; expansion + separators */
+	int sz = (e - b) * 3 + 16;
+	char *id = malloc(sz);
+	char *cls = malloc(sz);
+	char *extra = malloc(sz);
 
-	if (id) id[0] = '\0';
-	if (cls) cls[0] = '\0';
-	if (extra) extra[0] = '\0';
+	if (!id || !cls || !extra) die("malloc");
+	id[0] = cls[0] = extra[0] = '\0';
 
 	while (p < e) {
 		while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
@@ -282,15 +285,15 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 			/* id */
 			p++;
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
-			    && *p != '}' && idn < idsz - 1)
+			    && *p != '}')
 				id[idn++] = *p++;
 			id[idn] = '\0';
 		} else if (*p == '.') {
 			/* class */
 			p++;
-			if (cn > 0 && cn < clssz - 1) cls[cn++] = ' ';
+			if (cn > 0) cls[cn++] = ' ';
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
-			    && *p != '}' && cn < clssz - 1)
+			    && *p != '}')
 				cls[cn++] = *p++;
 			cls[cn] = '\0';
 		} else if (*p == '%') {
@@ -300,8 +303,8 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 			if (p < e) p++; /* skip closing % */
 		} else if (isalpha((unsigned char)*p)) {
 			/* key=val */
-			if (en > 0 && en < exsz - 1) extra[en++] = ' ';
-			while (p < e && *p != '=' && *p != ' ' && *p != '}' && en < exsz - 1)
+			if (en > 0) extra[en++] = ' ';
+			while (p < e && *p != '=' && *p != ' ' && *p != '}')
 				extra[en++] = *p++;
 			if (p < e && *p == '=') {
 				extra[en++] = '=';
@@ -309,7 +312,7 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 				if (p < e && *p == '"') {
 					extra[en++] = '"';
 					p++;
-					while (p < e && *p != '"' && en < exsz - 1) {
+					while (p < e && *p != '"') {
 						if (*p == '\\' && p + 1 < e) {
 							p++; /* skip backslash */
 							if (*p == '\\') {
@@ -317,10 +320,8 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 								p++;
 							} else if (*p == '"') {
 								/* escaped quote: emit &quot; */
-								if (en + 5 < exsz) {
-									memcpy(extra + en, "&quot;", 6);
-									en += 6;
-								}
+								memcpy(extra + en, "&quot;", 6);
+								en += 6;
 								p++;
 							} else {
 								extra[en++] = *p++;
@@ -332,10 +333,10 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 					if (p < e) { extra[en++] = '"'; p++; }
 				} else {
 					/* wrap unquoted value in quotes */
-					if (en < exsz - 1) extra[en++] = '"';
-					while (p < e && *p != ' ' && *p != '}' && en < exsz - 1)
+					extra[en++] = '"';
+					while (p < e && *p != ' ' && *p != '}')
 						extra[en++] = *p++;
-					if (en < exsz - 1) extra[en++] = '"';
+					extra[en++] = '"';
 				}
 			}
 			extra[en] = '\0';
@@ -343,6 +344,9 @@ parse_attrs(const char *b, const char *e, char *id, int idsz,
 			p++;
 		}
 	}
+	if (idp) *idp = id; else free(id);
+	if (clsp) *clsp = cls; else free(cls);
+	if (extrap) *extrap = extra; else free(extra);
 	return idn > 0 || cn > 0 || en > 0;
 }
 
@@ -384,7 +388,7 @@ emit_code_open(const char *info, const char *infoend)
 /* check previous line for {attrs} block */
 static void
 prev_line_attrs(const char *line, const char *start,
-    char *id, int idsz, char *cls, int clssz, char *extra, int exsz)
+    char **idp, char **clsp, char **extrap)
 {
 	const char *prev, *pp, *pe;
 	if (line <= start) return;
@@ -396,7 +400,7 @@ prev_line_attrs(const char *line, const char *start,
 	pe = pp + 1;
 	while (pe < line && *pe != '}') pe++;
 	if (pe < line && *pe == '}')
-		parse_attrs(pp + 1, pe, id, idsz, cls, clssz, extra, exsz);
+		parse_attrs(pp + 1, pe, idp, clsp, extrap);
 }
 
 static void
@@ -895,7 +899,7 @@ doattr(const char *b, const char *e, int n)
 			return 0;
 	}
 	{
-		char tid[128], tcls[128], textra[256];
+		char *tid, *tcls, *textra;
 		/* check if entire content is a comment */
 		{
 			const char *cc = p + 1;
@@ -913,9 +917,10 @@ doattr(const char *b, const char *e, int n)
 				}
 			}
 		}
-		if (!parse_attrs(p + 1, q, tid, sizeof(tid),
-		    tcls, sizeof(tcls), textra, sizeof(textra)))
+		if (!parse_attrs(p + 1, q, &tid, &tcls, &textra)) {
+			free(tid); free(tcls); free(textra);
 			return 0;
+		}
 		/* merge into pending */
 		if (tid[0])
 			pset(&pending_id, &cap_pid, tid);
@@ -923,6 +928,7 @@ doattr(const char *b, const char *e, int n)
 			pcat(&pending_class, &cap_pcls, tcls);
 		if (textra[0])
 			pset(&pending_attrs, &cap_pattr, textra);
+		free(tid); free(tcls); free(textra);
 	}
 	/* consume up to and including the line containing } */
 	return -(eol(q, e) - b);
@@ -1750,10 +1756,10 @@ doparagraph(const char *b, const char *e, int n)
 					}
 					if (q < p && *q == '}') {
 						/* validate attrs */
-						char tid[128], tcls[128], textra[256];
-						int valid = parse_attrs(s + 1, q, tid, sizeof(tid),
-						    tcls, sizeof(tcls), textra, sizeof(textra))
+						char *tid, *tcls, *textra;
+						int valid = parse_attrs(s + 1, q, &tid, &tcls, &textra)
 						    || (q == s + 1); /* empty {} */
+						free(tid); free(tcls); free(textra);
 						if (valid) {
 							if (q == s + 1) {
 								/* {} — consume silently */
@@ -2325,20 +2331,18 @@ dolink(const char *b, const char *e, int n)
 			if (ri) {
 				/* check for inline {attrs} after ] */
 				const char *rattr = "";
-				char inline_attr[256] = {0};
+				char *inline_attr = NULL;
 				const char *after_ref = q + 1;
 				if (after_ref < e && *after_ref == '{') {
 					const char *ab = after_ref + 1;
 					const char *ae = ab;
 					while (ae < e && *ae != '}' && *ae != '\n') ae++;
 					if (ae < e && *ae == '}') {
-						char aid[1], acls[1];
-						parse_attrs(ab, ae, aid, 1, acls, 1,
-						    inline_attr, sizeof(inline_attr));
+						parse_attrs(ab, ae, NULL, NULL, &inline_attr);
 						q = ae; /* consume the {attrs} */
 					}
 				}
-				rattr = inline_attr[0] ? inline_attr : refs[ri-1].attrs;
+				rattr = (inline_attr && inline_attr[0]) ? inline_attr : refs[ri-1].attrs;
 				if (img) {
 					fputs("<img alt=\"", output);
 					altprint(text, textend);
@@ -2356,6 +2360,7 @@ dolink(const char *b, const char *e, int n)
 					process(text, textend, 0);
 					fputs("</a>", output);
 				}
+				free(inline_attr);
 				return q + 1 - b;
 			}
 		}
@@ -2377,14 +2382,14 @@ dolink(const char *b, const char *e, int n)
 		const char *ae = ab;
 		while (ae < e && *ae != '}') ae++;
 		if (ae < e && *ae == '}') {
-			char sid[128], scls[128], sextra[256];
-			parse_attrs(ab, ae, sid, sizeof(sid),
-			    scls, sizeof(scls), sextra, sizeof(sextra));
+			char *sid, *scls, *sextra;
+			parse_attrs(ab, ae, &sid, &scls, &sextra);
 			fputs("<span", output);
 			emit_attrs(sid, scls, sextra);
 			fputc('>', output);
 			process(text, textend, 0);
 			fputs("</span>", output);
+			free(sid); free(scls); free(sextra);
 			return ae + 1 - b;
 		}
 	}
@@ -2697,10 +2702,14 @@ prescan(const char *b, const char *e)
 						refs[nrefs].labellen = labellen;
 						refs[nrefs].url = u;
 						refs[nrefs].urllen = urlbuflen;
-						refs[nrefs].attrs[0] = '\0';
+						refs[nrefs].attrs = NULL;
 						prev_line_attrs(line, b,
-						    &(char){0}, 1, &(char){0}, 1,
-						    refs[nrefs].attrs, sizeof(refs[nrefs].attrs));
+						    NULL, NULL, &refs[nrefs].attrs);
+						if (!refs[nrefs].attrs) {
+							refs[nrefs].attrs = malloc(1);
+							if (refs[nrefs].attrs)
+								refs[nrefs].attrs[0] = '\0';
+						}
 						nrefs++;
 					}
 					line = eol(line, e);
@@ -2737,13 +2746,12 @@ prescan(const char *b, const char *e)
 			if (findref(hdefs[hi].content, hdefs[hi].len,
 			    &(const char *){0}, &(int){0}))
 				continue;
-			char custom_id[128] = {0};
+			char *custom_id = NULL;
 			prev_line_attrs(hdefs[hi].line, b,
-			    custom_id, sizeof(custom_id),
-			    &(char){0}, 1, &(char){0}, 1);
+			    &custom_id, NULL, NULL);
 			char idbuf[256];
 			int idn;
-			if (custom_id[0]) {
+			if (custom_id && custom_id[0]) {
 				idn = strlen(custom_id);
 				if (idn > (int)sizeof(idbuf) - 2) idn = sizeof(idbuf) - 2;
 				memcpy(idbuf, custom_id, idn);
@@ -2764,10 +2772,13 @@ prescan(const char *b, const char *e)
 					refs[nrefs].labellen = hdefs[hi].len;
 					refs[nrefs].url = u;
 					refs[nrefs].urllen = ulen;
-					refs[nrefs].attrs[0] = '\0';
+					refs[nrefs].attrs = malloc(1);
+					if (refs[nrefs].attrs)
+						refs[nrefs].attrs[0] = '\0';
 					nrefs++;
 				}
 			}
+			free(custom_id);
 		}
 	}
 }
@@ -2892,8 +2903,10 @@ cdjot_convert(FILE *out, const char *buf, int len)
 	close_sections(0);
 	emit_endnotes();
 
-	for (i = 0; i < nrefs; i++)
+	for (i = 0; i < nrefs; i++) {
 		free((char *)refs[i].url);
+		free(refs[i].attrs);
+	}
 	free(refs);
 	for (i = 0; i < nfootnotes; i++)
 		free(footnotes[i].content);
