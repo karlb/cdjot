@@ -15,4 +15,7 @@ test: djot
 install: djot
 	install -Dm755 djot $(DESTDIR)$(PREFIX)/bin/djot
 
-.PHONY: clean test install
+bench: djot
+	sh bench.sh
+
+.PHONY: clean test install bench
