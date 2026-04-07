@@ -2,6 +2,7 @@
  * No dependencies beyond libc.
  */
 #include <ctype.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2927,51 +2928,79 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	return 0;
 }
 
-int
-main(int argc, char *argv[])
+static char *
+readall(FILE *f, int *outlen)
 {
 	char *buf = NULL;
-	int len = 0, cap = 0;
-	int n, i;
-	FILE *source = stdin;
-
-	for (i = 1; i < argc; i++) {
-		if (!strcmp("-v", argv[i])) {
-			fprintf(stderr, "cdjot 0.1\n");
-			return 0;
-		} else if (!strcmp("-h", argv[i])) {
-			fprintf(stderr, "Usage: %s [-h] [-v] [file]\n", argv[0]);
-			return 0;
-		} else if (!strcmp("--", argv[i])) {
-			i++;
-			break;
-		} else if (argv[i][0] == '-') {
-			fprintf(stderr, "Usage: %s [-h] [-v] [file]\n", argv[0]);
-			return 1;
-		} else {
-			break;
-		}
-	}
-	if (i < argc) {
-		source = fopen(argv[i], "r");
-		if (!source) {
-			fprintf(stderr, "cdjot: cannot open '%s'\n", argv[i]);
-			return 1;
-		}
-	}
+	int len = 0, cap = 0, n;
 
 	do {
 		cap += BUFSIZ;
 		buf = realloc(buf, cap);
 		if (!buf) die("malloc");
-		n = fread(buf + len, 1, cap - len, source);
+		n = fread(buf + len, 1, cap - len, f);
 		len += n;
 	} while (n > 0);
+	*outlen = len;
+	return buf;
+}
 
-	if (source != stdin)
-		fclose(source);
+int
+main(int argc, char *argv[])
+{
+	int i, ret = 0;
 
-	cdjot_convert(stdout, buf, len);
-	free(buf);
-	return 0;
+	signal(SIGPIPE, SIG_DFL);
+
+	for (i = 1; i < argc; i++) {
+		if (!strcmp("-v", argv[i]) || !strcmp("--version", argv[i])) {
+			fprintf(stderr, "cdjot 0.1\n");
+			return 0;
+		} else if (!strcmp("-h", argv[i]) || !strcmp("--help", argv[i])) {
+			fprintf(stderr,
+				"Usage: %s [-h] [-v] [file ...]\n"
+				"  printf '# hi\\n' | %s\n",
+				argv[0], argv[0]);
+			return 0;
+		} else if (!strcmp("--", argv[i])) {
+			i++;
+			break;
+		} else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+			fprintf(stderr, "Usage: %s [-h] [-v] [file ...]\n", argv[0]);
+			return 2;
+		} else {
+			break;
+		}
+	}
+
+	if (i >= argc) {
+		/* no file arguments: read stdin */
+		int len;
+		char *buf = readall(stdin, &len);
+		cdjot_convert(stdout, buf, len);
+		free(buf);
+	} else {
+		for (; i < argc; i++) {
+			FILE *source;
+			int len;
+			char *buf;
+
+			if (!strcmp("-", argv[i])) {
+				source = stdin;
+			} else {
+				source = fopen(argv[i], "r");
+				if (!source) {
+					fprintf(stderr, "cdjot: cannot open '%s'\n", argv[i]);
+					ret = 1;
+					continue;
+				}
+			}
+			buf = readall(source, &len);
+			if (source != stdin)
+				fclose(source);
+			cdjot_convert(stdout, buf, len);
+			free(buf);
+		}
+	}
+	return ret;
 }
