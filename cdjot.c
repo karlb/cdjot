@@ -2873,7 +2873,7 @@ emit_endnotes(void)
 }
 
 int
-cdjot_convert(FILE *out, const char *buf, int len)
+cdjot_convert(FILE *out, const char *buf, size_t len)
 {
 	int i;
 

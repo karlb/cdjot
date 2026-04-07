@@ -10,6 +10,6 @@
  * Not thread-safe; safe to call multiple times sequentially.
  * Returns 0 on success.
  */
-int cdjot_convert(FILE *out, const char *buf, int len);
+int cdjot_convert(FILE *out, const char *buf, size_t len);
 
 #endif
