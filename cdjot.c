@@ -52,6 +52,8 @@ static Parser parsers[] = {
 	dolinebreak, docode, dosurround, dolink, doautolink, doreplace,
 };
 
+/* Converter state — global for simplicity (smu-style). Not thread-safe;
+ * reset at the start of each cdjot_convert() call. */
 static struct {
 	const char *label; int labellen;
 	const char *url; int urllen;
