@@ -44,7 +44,13 @@ fail=0
 # --- Performance benchmark (hyperfine) ---
 if command -v hyperfine >/dev/null 2>&1; then
 	echo "=== Performance ==="
-	hyperfine --warmup 3 --max-runs 10 "./djot < $INPUT > /dev/null"
+	if command -v npx >/dev/null 2>&1; then
+		hyperfine --warmup 3 --max-runs 10 \
+			"./djot < $INPUT > /dev/null" \
+			"npx --yes @djot/djot < $INPUT > /dev/null"
+	else
+		hyperfine --warmup 3 --max-runs 10 "./djot < $INPUT > /dev/null"
+	fi
 	echo ""
 else
 	echo "SKIP: hyperfine not found (install for performance benchmarks)"
