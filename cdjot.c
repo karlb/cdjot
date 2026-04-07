@@ -2958,15 +2958,23 @@ main(int argc, char *argv[])
 			return 0;
 		} else if (!strcmp("-h", argv[i]) || !strcmp("--help", argv[i])) {
 			fprintf(stderr,
-				"Usage: %s [-h] [-v] [file ...]\n"
-				"  printf '# hi\\n' | %s\n",
+				"cdjot - convert djot to HTML\n"
+				"\n"
+				"Usage: %s [-hv] [file ...]\n"
+				"\n"
+				"Example:\n"
+				"  printf '# hi\\n' | %s\n"
+				"\n"
+				"Options:\n"
+				"  -h, --help     show this help\n"
+				"  -v, --version  show version\n",
 				argv[0], argv[0]);
 			return 0;
 		} else if (!strcmp("--", argv[i])) {
 			i++;
 			break;
 		} else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-			fprintf(stderr, "Usage: %s [-h] [-v] [file ...]\n", argv[0]);
+			fprintf(stderr, "Usage: %s [-hv] [file ...]\n", argv[0]);
 			return 2;
 		} else {
 			break;
