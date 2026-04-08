@@ -1494,7 +1494,66 @@ dolist(const char *b, const char *e, int n)
 		fputs(">\n", output);
 	}
 
+	/* pre-scan: check if list is loose (has blank lines between
+	 * same-level items). Must be done before emitting any items
+	 * so ALL items get <p> wrapping when loose.
+	 * Note: item_has_inner_blank() in the main loop also sets loose
+	 * for blanks within an item, which doesn't need pre-scanning
+	 * since it affects the item itself and all following items. */
 	loose = 0;
+	{
+		const char *scan = b;
+		int prev_at_top = 1; /* was prev non-blank line at top level? */
+		while (scan < e && !loose) {
+			const char *le = eol(scan, e);
+			if (isblankline(scan, le)) {
+				const char *nb = skip_blanks(scan, e);
+				if (nb >= e) break;
+				int lsp = spaces(nb, e);
+				/* blank followed by same-level marker, AND
+				 * previous content was also at top level →
+				 * blank between items → loose.
+				 * (blank after deeper content is just a
+				 * sub-list ending, not inter-item blank) */
+				if (lsp == sp && prev_at_top) {
+					int st2; char d2, m2;
+					if (scan_marker(nb + lsp, e, &st2,
+					    &(int){0}, &d2, &m2))
+						loose = 1;
+				}
+				/* blank followed by indented non-marker
+				 * continuation → inner blank → loose
+				 * (but not if followed by a sub-list marker,
+				 * which is just sub-content) */
+				if (lsp > sp && prev_at_top) {
+					int st2; char d2, m2;
+					if (!scan_marker(nb + lsp, e, &st2,
+					    &(int){0}, &d2, &m2))
+						loose = 1;
+				}
+				scan = nb;
+				continue;
+			}
+			/* track whether this line is at top level */
+			{
+				int lsp = spaces(scan, e);
+				if (lsp == sp) {
+					int st2; char d2, m2;
+					if (scan_marker(scan + lsp, e, &st2,
+					    &(int){0}, &d2, &m2)) {
+						if (style == 0 ?
+						    (st2 != 0 || m2 != mch) :
+						    (d2 != delim))
+							break;
+					}
+					prev_at_top = 1;
+				} else {
+					prev_at_top = 0;
+				}
+			}
+			scan = le;
+		}
+	}
 	had_blank = 0;
 	line = b;
 	{
