@@ -2554,6 +2554,18 @@ doreplace(const char *b, const char *e, int n)
 	int can_open, can_close;
 	if (n) return 0;
 
+	/* inline comment: {% ... %} — consume without output */
+	if (*b == '{' && b + 1 < e && b[1] == '%') {
+		const char *q = b + 2;
+		while (q < e) {
+			if (*q == '%' && q + 1 < e && q[1] == '}')
+				return q + 2 - b;
+			/* comments can span lines */
+			q++;
+		}
+		return 0;
+	}
+
 	/* {X...} where X is not a known opener: output literally to prevent
 	 * smart replacement of contents (e.g. {1--} should not become {1–}) */
 	if (*b == '{' && b + 1 < e
