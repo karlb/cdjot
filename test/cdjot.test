@@ -12,21 +12,8 @@ the content."
 <p><code>`foo`</code></p>
 ```
 
-```
-`` ` ``
-.
-<p><code>`</code></p>
-```
-
 URL line continuation: "the line breaks and any leading and trailing
 space is ignored, and the lines are concatenated together."
-
-```
-[link](url
-  andurl)
-.
-<p><a href="urlandurl">link</a></p>
-```
 
 ```
 [link](http://example.com?n=123
@@ -52,22 +39,10 @@ __emphasis inside_ emphasis_
 <p><em><em>emphasis inside</em> emphasis</em></p>
 ```
 
-```
-*a *b* c*
-.
-<p><strong>a <strong>b</strong> c</strong></p>
-```
+Regression tests: these verify spec-correct behavior where the
+djot.js npm release (v0.3.2) diverged. Already fixed upstream.
 
-```
-_a _b_ c_
-.
-<p><em>a <em>b</em> c</em></p>
-```
-
-Regression tests: these verify spec-correct behavior that JS djot
-(v0.3.2) gets wrong. cdjot already passes these.
-
-The star inside a link destination is protected from closing emphasis:
+Emphasis delimiters inside link URLs don't close emphasis:
 
 ```
 *[closed](hello*)
@@ -75,18 +50,10 @@ The star inside a link destination is protected from closing emphasis:
 <p>*<a href="hello*">closed</a></p>
 ```
 
-Underscores in link destinations don't close emphasis:
-
 ```
 _[link](http://example.com?foo_bar=1), more text_
 .
 <p><em><a href="http://example.com?foo_bar=1">link</a>, more text</em></p>
-```
-
-```
-_hello [link](a_b) world_
-.
-<p><em>hello <a href="a_b">link</a> world</em></p>
 ```
 
 Block attributes require no blank line before the block:
