@@ -2085,8 +2085,12 @@ dosurround(const char *b, const char *e, int n)
 		}
 	}
 
-	/* find matching close (single delimiter) */
+	/* find matching close (single delimiter)
+	 * Track inner openers so the closest opener wins when
+	 * multiple openers compete for the same closer. */
 	start = b + 1 + consumed_open;
+	{
+	int inner_openers = 0;
 	for (p = start; p < e; p++) {
 		if (*p == '\\' && p + 1 < e) { p++; continue; }
 		/* skip explicit openers {_ and closers _} that aren't ours */
@@ -2155,38 +2159,59 @@ dosurround(const char *b, const char *e, int n)
 			}
 		}
 		if (*p == ch) {
+			int is_closer = 0, is_opener = 0;
 			int explicit_close = (p + 1 < e && p[1] == '}');
-			int consumed_close = explicit_close ? 1 : 0;
 
 			/* explicit openers only match explicit closers */
 			if (explicit_open && !explicit_close) continue;
 			if (!explicit_open && explicit_close) continue;
 
-			/* djot closer rule: char before marker is not whitespace
-			 * (explicit closers bypass this rule) */
-			if (!explicit_close) {
+			/* check closer validity */
+			if (explicit_close) {
+				if (p > start) is_closer = 1;
+			} else {
 				char bb = (p > start) ? p[-1] : 0;
-				if (isws(bb)) continue;
+				if (p > start && !isws(bb))
+					is_closer = 1;
 			}
-			if (p == start) continue; /* no empty emphasis */
-			/* reject if content is all delimiter chars */
+
+			/* check opener validity (char after not whitespace) */
 			if (!explicit_open) {
-				const char *t;
-				int alldelim = 1;
-				for (t = start; t < p; t++)
-					if (*t != ch) { alldelim = 0; break; }
-				if (alldelim) continue;
+				char aa = (p + 1 < e) ? p[1] : 0;
+				if (p + 1 < e && !isws(aa))
+					is_opener = 1;
 			}
-			stop = p;
-			{
-				const char *otag, *ctag;
-				surround_lookup(ch, &otag, &ctag);
-				fputs(otag, output);
-				process(start, stop, 0);
-				fputs(ctag, output);
+
+			if (p == start) { is_closer = 0; is_opener = 1; }
+
+			if (is_closer && inner_openers > 0) {
+				/* a closer opener claims this closer */
+				inner_openers--;
+				continue;
 			}
-			return stop + 1 + consumed_close - b;
+			if (is_closer) {
+				/* reject if content is all delimiter chars */
+				if (!explicit_open) {
+					const char *t;
+					int alldelim = 1;
+					for (t = start; t < p; t++)
+						if (*t != ch) { alldelim = 0; break; }
+					if (alldelim) continue;
+				}
+				stop = p;
+				{
+					const char *otag, *ctag;
+					surround_lookup(ch, &otag, &ctag);
+					fputs(otag, output);
+					process(start, stop, 0);
+					fputs(ctag, output);
+				}
+				return stop + 1 + (explicit_close ? 1 : 0) - b;
+			}
+			if (is_opener)
+				inner_openers++;
 		}
+	}
 	}
 	return 0;
 }
