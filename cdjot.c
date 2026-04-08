@@ -1953,9 +1953,11 @@ docode(const char *b, const char *e, int n)
 			const char *after = p + count;
 			code = b + count;
 			codelen = p - code;
-			/* trim single space from each end (single backtick only) */
-			if (count == 1 && codelen >= 2
-			    && code[0] == ' ' && code[codelen-1] == ' ') {
+			/* trim single space from each end if content
+			 * starts or ends with a backtick */
+			if (codelen >= 2
+			    && code[0] == ' ' && code[codelen-1] == ' '
+			    && (code[1] == '`' || code[codelen-2] == '`')) {
 				code++;
 				codelen -= 2;
 			}
