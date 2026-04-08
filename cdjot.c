@@ -1817,6 +1817,20 @@ doparagraph(const char *b, const char *e, int n)
 				continue;
 			}
 			if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
+				/* skip {attrs} after ![...](url) — dolink handles image attrs */
+				if (s > b && s[-1] == ')') {
+					const char *rp = s - 2;
+					int d = 1;
+					while (rp >= b && d > 0) {
+						if (*rp == ')') d++;
+						if (*rp == '(') d--;
+						rp--;
+					}
+					if (rp >= b && *rp == ']') {
+						/* found ](...)  before { — skip this {attrs} */
+						goto copy_char;
+					}
+				}
 				int preceded_by_word = (s > b && s[-1] != ' ' && s[-1] != '\n'
 				    && s[-1] != '\t');
 				/* skip known {X openers (emphasis, quotes) */
@@ -2426,11 +2440,26 @@ dolink(const char *b, const char *e, int n)
 		while (dest < destend && isws(*dest)) dest++;
 		while (destend > dest && isws(destend[-1])) destend--;
 		if (img) {
+			const char *after = q + 1;
 			fputs("<img alt=\"", output);
 			altprint(text, textend);
 			fputs("\" src=\"", output);
 			emit_url(dest, destend);
-			fputs("\">", output);
+			fputs("\"", output);
+			/* check for inline attributes {.class #id ...} */
+			if (after < e && *after == '{') {
+				const char *ab = after + 1;
+				const char *ae = ab;
+				while (ae < e && *ae != '}') ae++;
+				if (ae < e && *ae == '}') {
+					char *sid, *scls, *sextra;
+					parse_attrs(ab, ae, &sid, &scls, &sextra);
+					emit_attrs(sid, scls, sextra);
+					free(sid); free(scls); free(sextra);
+					q = ae; /* advance past } */
+				}
+			}
+			fputs(">", output);
 		} else {
 			fputs("<a href=\"", output);
 			emit_url(dest, destend);
