@@ -1,12 +1,10 @@
 # cdjot
 
-A single-file C99 [djot](https://djot.net/) to HTML converter. ~3000 lines, no dependencies beyond libc. Reads stdin, writes stdout.
+A single-file C99 [djot](https://djot.net/) to HTML converter. ~3000 lines, no dependencies beyond libc.
 
-Djot is a markup language designed as a principled replacement for Markdown. It eliminates Markdown's ambiguities and corner cases while adding features like definition lists, footnotes, attributes, and more — all backed by a complete specification.
+Djot is a markup language designed as a principled replacement for Markdown. It eliminates Markdown's ambiguities and corner cases while adding features like definition lists, footnotes, attributes, and more.
 
-cdjot converts djot to HTML. That's all it does.
-
-Similar in spirit to [smu](https://github.com/karlb/smu), but backed by a real spec.
+Similar in spirit to [smu](https://github.com/karlb/smu), but backed by a real spec. No features beyond the conversion itself (no AST, no filters, etc).
 
 ## Build
 
