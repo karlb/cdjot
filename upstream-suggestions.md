@@ -1,75 +1,17 @@
 # Upstream suggestions for djot.js
 
-Findings from comparing cdjot output against djot.js v0.3.2 on 250 test
-blocks plus 4 standalone djot documents (syntax.md, cheatsheet.md,
-quickstart.md, bench/readme.dj).
+Findings from comparing cdjot against djot.js. Initial comparison was
+against the npm-published v0.3.2 CLI, which revealed several
+discrepancies. On investigation, all of these have already been fixed
+in the djot.js repo post-0.3.2 (commits 713a417, cc1b4e5, df32bf3,
+7892004) but haven't been released yet.
 
-## JS djot bugs
-
-These cases produce output that disagrees with both the djot spec and
-the expected output in djot.js's own test files.
-
-### 1. Emphasis delimiters inside link URLs close emphasis
-
-Test file: `test/links_and_images.test` blocks 20-23
-
-The test file says "the star inside the destination is protected from
-closing emphasis" and expects:
-
-    *[closed](hello*)  →  <p>*<a href="hello*">closed</a></p>
-
-But djot.js v0.3.2 produces:
-
-    <p><strong>[closed](hello</strong>)</p>
-
-Same issue with underscores:
-
-    _[link](http://example.com?foo_bar=1), more text_
-
-Expected (per test file): `<em><a href="...">link</a>, more text</em>`
-Actual: emphasis broken by `_` inside URL.
-
-### 2. Attributes applied despite blank line separation
-
-Test file: `test/attributes.test` block 15
-
-The test file says "If there is a blank line between, the attributes
-won't be applied" and expects:
-
-    {#id .class}
-    ↵
-    A paragraph  →  <p>A paragraph</p>
-
-The spec says: "put the attributes on the line immediately before the
-block."
-
-But djot.js v0.3.2 applies the attributes through the blank line:
-
-    <p id="id" class="class">A paragraph</p>
-
-### 3. Heading auto-ID includes footnote reference number
-
-Test file: `test/headings.test` block 14
-
-The spec explicitly states: "For example, `# Introduction[^1]`
-generates the identifier `Introduction`, not `Introduction1`."
-
-The test file expects `id="Introduction"`. But djot.js produces
-`id="Introduction1"`.
-
-### 4. Task lists with different markers merged into one list
-
-Test file: `test/task_lists.test` block 3
-
-The spec says: "changing ordered list style or bullet will stop one list
-and start a new one." The test file expects three separate `<ul>` lists
-for `- [ ]`, `+ [ ]`, `* [ ]` markers. But djot.js merges them into a
-single list.
+What remains are proposed test cases for spec behaviors that are
+described in syntax.md prose but have no corresponding test blocks.
+djot.js already handles all of these correctly — these are just
+coverage gaps.
 
 ## Proposed new test cases
-
-These spec behaviors are described in prose (syntax.md) but have no
-corresponding test blocks. Adding them would catch regressions.
 
 ### Verbatim space stripping with multi-backtick delimiters
 
@@ -77,7 +19,7 @@ The spec says: "If the content starts or ends with a backtick character,
 a single space is removed between the opening or closing backticks and
 the content."
 
-The existing test for this (`test/verbatim.test` block 6) only tests
+The existing test (`test/verbatim.test` block 6) only tests
 single-backtick delimiters wrapping double-backtick content. The reverse
 (multi-backtick delimiters wrapping single-backtick content) is untested.
 
@@ -140,18 +82,18 @@ continuation lines is untested.
 <p><a href="http://example.com?n=123456">link</a></p>
 ```
 
-## Spec clarification suggestions
+## Spec clarification suggestion
 
 ### Heading auto-ID: punctuation handling for `/` and `'`
 
 The spec says auto-IDs are formed by "removing punctuation (other than
 `_` and `-`), replacing spaces with `-`". This is clear, but
-implementations disagree on edge cases:
+implementations may disagree on edge cases:
 
 - `/` in headings: should it be removed (→ `Emphasisstrong`) or
   replaced with `-` (→ `Emphasis-strong`)? The spec says "removed."
 - `'` (apostrophe): should it be removed? The spec says yes (it's
-  punctuation, not `_` or `-`). JS djot keeps it.
+  punctuation, not `_` or `-`).
 
 An explicit example in the spec would help:
 
