@@ -1,0 +1,149 @@
+cdjot-specific tests: bugs found via corpus comparison against JS djot,
+plus regression tests for spec-correct behavior that JS djot gets wrong.
+
+Verbatim space stripping applies regardless of delimiter length.
+The spec says: "If the content starts or ends with a backtick character,
+a single space is removed between the opening or closing backticks and
+the content."
+
+```
+`` `foo` ``
+.
+<p><code>`foo`</code></p>
+```
+
+```
+`` ` ``
+.
+<p><code>`</code></p>
+```
+
+URL line continuation: "the line breaks and any leading and trailing
+space is ignored, and the lines are concatenated together."
+
+```
+[link](url
+  andurl)
+.
+<p><a href="urlandurl">link</a></p>
+```
+
+```
+[link](http://example.com?n=123
+    456)
+.
+<p><a href="http://example.com?n=123456">link</a></p>
+```
+
+Emphasis precedence: "When there are multiple openers that might be
+matched with a given closer, the closest one is used."
+
+```
+*not strong *strong*
+.
+<p>*not strong <strong>strong</strong></p>
+```
+
+Nested emphasis: "Emphasis can be nested."
+
+```
+__emphasis inside_ emphasis_
+.
+<p><em><em>emphasis inside</em> emphasis</em></p>
+```
+
+```
+*a *b* c*
+.
+<p><strong>a <strong>b</strong> c</strong></p>
+```
+
+```
+_a _b_ c_
+.
+<p><em>a <em>b</em> c</em></p>
+```
+
+Regression tests: these verify spec-correct behavior that JS djot
+(v0.3.2) gets wrong. cdjot already passes these.
+
+The star inside a link destination is protected from closing emphasis:
+
+```
+*[closed](hello*)
+.
+<p>*<a href="hello*">closed</a></p>
+```
+
+Underscores in link destinations don't close emphasis:
+
+```
+_[link](http://example.com?foo_bar=1), more text_
+.
+<p><em><a href="http://example.com?foo_bar=1">link</a>, more text</em></p>
+```
+
+```
+_hello [link](a_b) world_
+.
+<p><em>hello <a href="a_b">link</a> world</em></p>
+```
+
+Block attributes require no blank line before the block:
+
+```
+{#id .class}
+
+A paragraph
+.
+<p>A paragraph</p>
+```
+
+Heading auto-ID excludes footnote reference text (spec explicitly
+states: "# Introduction[^1] generates the identifier Introduction,
+not Introduction1"):
+
+```
+# Introduction[^1]
+
+[^1]: A note.
+.
+<section id="Introduction">
+<h1>Introduction<a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></h1>
+</section>
+<section role="doc-endnotes">
+<hr>
+<ol>
+<li id="fn1">
+<p>A note.<a href="#fnref1" role="doc-backlink">↩︎</a></p>
+</li>
+</ol>
+</section>
+```
+
+Different bullet markers create separate lists:
+
+```
+- [ ] foo
++ [ ] bar
+* [ ] baz
+.
+<ul class="task-list">
+<li>
+<input disabled="" type="checkbox"/>
+foo
+</li>
+</ul>
+<ul class="task-list">
+<li>
+<input disabled="" type="checkbox"/>
+bar
+</li>
+</ul>
+<ul class="task-list">
+<li>
+<input disabled="" type="checkbox"/>
+baz
+</li>
+</ul>
+```
