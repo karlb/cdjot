@@ -2239,7 +2239,20 @@ static void
 emit_url(const char *b, const char *e)
 {
 	for (; b < e; b++) {
-		if (*b == '\n' || *b == '\r') continue;
+		/* collapse whitespace runs containing a newline */
+		if (*b == ' ' || *b == '\t' || *b == '\n' || *b == '\r') {
+			const char *s = b;
+			int nl = 0;
+			while (b < e && (*b == ' ' || *b == '\t'
+			    || *b == '\n' || *b == '\r')) {
+				if (*b == '\n' || *b == '\r') nl = 1;
+				b++;
+			}
+			if (!nl)
+				for (; s < b; s++) fputc(*s, output);
+			b--;
+			continue;
+		}
 		if (*b == '\\' && b + 1 < e && isasciipunct(b[1])) {
 			b++;
 			if (*b == '&') fputs("&amp;", output);
