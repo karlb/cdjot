@@ -344,3 +344,20 @@ No leading space: it IS a separator.
 </tr>
 </table>
 ```
+
+Block attributes preceding a definition list should attach to
+the <dl>, not leak into the first <dd>'s content.
+
+```
+{variant=Simple}
+: term
+
+  definition
+.
+<dl variant="Simple">
+<dt>term</dt>
+<dd>
+<p>definition</p>
+</dd>
+</dl>
+```
