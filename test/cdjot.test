@@ -487,3 +487,17 @@ line2
 <p>line1<br>
 line2</p>
 ```
+
+Whitespace-only lines are blank lines (CommonMark convention, which
+djot inherits). A line containing only spaces must end the preceding
+block and separate from the next. (There is a single space on the
+line between the two paragraphs below.)
+
+```
+para
+ 
+para2
+.
+<p>para</p>
+<p>para2</p>
+```
