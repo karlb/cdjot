@@ -375,6 +375,33 @@ emit_attrs(const char *id, const char *cls, const char *extra)
 	if (extra && extra[0]) fprintf(output, " %s", extra);
 }
 
+/* Scan for trailing inline attrs {…} starting at p.
+ * Returns pointer past '}' if found, or p if not. */
+static const char *
+scan_inline_attrs(const char *p, const char *e,
+    char **sid, char **scls, char **sextra)
+{
+	const char *ab, *ae;
+	*sid = *scls = *sextra = NULL;
+	if (p >= e || *p != '{') return p;
+	ab = p + 1;
+	ae = ab;
+	while (ae < e && *ae != '}') {
+		if (*ae == '\\' && ae + 1 < e) { ae += 2; continue; }
+		if (*ae == '"') {
+			ae++;
+			while (ae < e && *ae != '"') {
+				if (*ae == '\\' && ae + 1 < e) ae += 2;
+				else ae++;
+			}
+			if (ae < e) ae++;
+		} else ae++;
+	}
+	if (ae >= e || *ae != '}') return p;
+	parse_attrs(ab, ae, sid, scls, sextra);
+	return ae + 1;
+}
+
 static void
 emit_fence_lines(const char *b, const char *e, int indent)
 {
@@ -1817,7 +1844,16 @@ doparagraph(const char *b, const char *e, int n)
 				continue;
 			}
 			if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
-				/* skip {attrs} after ![...](url) — dolink handles image attrs */
+				/* skip {attrs} after inline closers — parsers handle them */
+				if (s > b && (s[-1] == '`' || s[-1] == '>'
+				    || s[-1] == '*' || s[-1] == '_'
+				    || s[-1] == '~' || s[-1] == '^'))
+					goto copy_char;
+				/* skip {attrs} after explicit surround closers +} -} =} */
+				if (s > b + 1 && s[-1] == '}'
+				    && (s[-2] == '+' || s[-2] == '-' || s[-2] == '='))
+					goto copy_char;
+				/* skip {attrs} after [text](url) — dolink handles link attrs */
 				if (s > b && s[-1] == ')') {
 					const char *rp = s - 2;
 					int d = 1;
@@ -2058,12 +2094,22 @@ docode(const char *b, const char *e, int n)
 				hprint(code, code + codelen);
 				fputs(math == 1 ? "\\)" : "\\]", output);
 				fputs("</span>", output);
+				return p + count - start;
 			} else {
-				fputs("<code>", output);
+				char *sid = NULL, *scls = NULL, *sextra = NULL;
+				const char *aend = after;
+				/* parse inline attrs unless {=format} attempt */
+				if (!(after < e && *after == '{' && after + 1 < e
+				    && after[1] == '='))
+					aend = scan_inline_attrs(after, e, &sid, &scls, &sextra);
+				fputs("<code", output);
+				emit_attrs(sid, scls, sextra);
+				fputc('>', output);
 				hprint(code, code + codelen);
 				fputs("</code>", output);
+				free(sid); free(scls); free(sextra);
+				return aend - start;
 			}
-			return p + count - start;
 		}
 		p += run;
 	}
@@ -2143,14 +2189,26 @@ dosurround(const char *b, const char *e, int n)
 					char bb = (rp > b + run) ? rp[-1] : 0;
 					if (!isws(bb) && rp > b + run) {
 						const char *ot, *ct;
-						int j;
+						int j, otlen;
+						char *sid, *scls, *sextra;
+						const char *end;
 						surround_lookup(ch, &ot, &ct);
-						for (j = 0; j < run; j++)
-							fputs(ot, output);
+						end = scan_inline_attrs(rp + run, e, &sid, &scls, &sextra);
+						otlen = strlen(ot);
+						for (j = 0; j < run; j++) {
+							if (j == 0 && end > rp + run) {
+								fwrite(ot, 1, otlen - 1, output);
+								emit_attrs(sid, scls, sextra);
+								fputc('>', output);
+							} else {
+								fputs(ot, output);
+							}
+						}
 						process(b + run, rp, 0);
 						for (j = 0; j < run; j++)
 							fputs(ct, output);
-						return rp + run - b;
+						free(sid); free(scls); free(sextra);
+						return end - b;
 					}
 				}
 				rp += crun;
@@ -2274,12 +2332,24 @@ dosurround(const char *b, const char *e, int n)
 				stop = p;
 				{
 					const char *otag, *ctag;
+					char *sid, *scls, *sextra;
+					const char *after_close, *aend;
 					surround_lookup(ch, &otag, &ctag);
-					fputs(otag, output);
+					after_close = stop + 1 + (explicit_close ? 1 : 0);
+					aend = scan_inline_attrs(after_close, e, &sid, &scls, &sextra);
+					if (aend > after_close) {
+						int otlen = strlen(otag);
+						fwrite(otag, 1, otlen - 1, output);
+						emit_attrs(sid, scls, sextra);
+						fputc('>', output);
+					} else {
+						fputs(otag, output);
+					}
 					process(start, stop, 0);
 					fputs(ctag, output);
+					free(sid); free(scls); free(sextra);
+					return aend - b;
 				}
-				return stop + 1 + (explicit_close ? 1 : 0) - b;
 			}
 			if (is_opener)
 				inner_openers++;
@@ -2584,20 +2654,25 @@ doautolink(const char *b, const char *e, int n)
 	if (p >= e || *p != '>') return 0;
 	if (!memchr(b + 1, ':', p - b - 1) && !memchr(b + 1, '@', p - b - 1))
 		return 0;
-	if (memchr(b + 1, '@', p - b - 1) && !memchr(b + 1, ':', p - b - 1)) {
-		fputs("<a href=\"mailto:", output);
-		hprint(b + 1, p);
-		fputs("\">", output);
+	{
+		char *sid, *scls, *sextra;
+		const char *aend = scan_inline_attrs(p + 1, e, &sid, &scls, &sextra);
+		if (memchr(b + 1, '@', p - b - 1) && !memchr(b + 1, ':', p - b - 1)) {
+			fputs("<a href=\"mailto:", output);
+			hprint(b + 1, p);
+			fputs("\"", output);
+		} else {
+			fputs("<a href=\"", output);
+			emit_url(b + 1, p);
+			fputs("\"", output);
+		}
+		emit_attrs(sid, scls, sextra);
+		fputs(">", output);
 		hprint(b + 1, p);
 		fputs("</a>", output);
-	} else {
-		fputs("<a href=\"", output);
-		emit_url(b + 1, p);
-		fputs("\">", output);
-		hprint(b + 1, p);
-		fputs("</a>", output);
+		free(sid); free(scls); free(sextra);
+		return aend - b;
 	}
-	return p + 1 - b;
 }
 
 static int
