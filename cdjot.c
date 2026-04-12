@@ -2865,9 +2865,12 @@ process(const char *b, const char *e, int newblock)
 	for (p = b; p < e; ) {
 		if (newblock) {
 			int had_blank = 0;
-			while (p < e && *p == '\n') {
+			while (p < e) {
+				const char *le = eol(p, e);
+				if (!isblankline(p, le)) break;
 				had_blank = 1;
-				if (++p == e) return;
+				p = le;
+				if (p >= e) return;
 			}
 			if (had_blank && has_pending())
 				clear_pending();
