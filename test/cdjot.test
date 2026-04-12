@@ -361,3 +361,31 @@ the <dl>, not leak into the first <dd>'s content.
 </dd>
 </dl>
 ```
+
+Multi-line {% ... %} block comments require continuation lines to
+be indented. Without indentation, it's a regular paragraph.
+
+```
+{%
+SPDX-FileCopyrightText: 2025
+%}
+
+Hello.
+.
+<p>{%
+SPDX-FileCopyrightText: 2025
+%}</p>
+<p>Hello.</p>
+```
+
+With indented continuation, it's a valid block comment.
+
+```
+{%
+  SPDX-FileCopyrightText: 2025
+  %}
+
+Hello.
+.
+<p>Hello.</p>
+```
