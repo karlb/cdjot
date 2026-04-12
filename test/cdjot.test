@@ -469,3 +469,21 @@ b
 </ul>
 <p>Para.</p>
 ```
+
+Backslash + newline produces a hard line break, even at end of
+paragraph (per spec: "backslash + newline" = <br>, unconditional).
+
+```
+para\
+.
+<p>para<br>
+</p>
+```
+
+```
+line1\
+line2
+.
+<p>line1<br>
+line2</p>
+```
