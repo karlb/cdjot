@@ -2461,11 +2461,36 @@ dolink(const char *b, const char *e, int n)
 			}
 			fputs(">", output);
 		} else {
+			char *sid = NULL, *scls = NULL, *sextra = NULL;
+			const char *after = q + 1;
+			/* check for inline attributes {.class #id key=val ...} */
+			if (after < e && *after == '{') {
+				const char *ab = after + 1;
+				const char *ae = ab;
+				while (ae < e && *ae != '}') {
+					if (*ae == '\\' && ae + 1 < e) { ae += 2; continue; }
+					if (*ae == '"') {
+						ae++;
+						while (ae < e && *ae != '"') {
+							if (*ae == '\\' && ae + 1 < e) ae += 2;
+							else ae++;
+						}
+						if (ae < e) ae++;
+					} else ae++;
+				}
+				if (ae < e && *ae == '}') {
+					parse_attrs(ab, ae, &sid, &scls, &sextra);
+					q = ae;
+				}
+			}
 			fputs("<a href=\"", output);
 			emit_url(dest, destend);
-			fputs("\">", output);
+			fputs("\"", output);
+			emit_attrs(sid, scls, sextra);
+			fputs(">", output);
 			process(text, textend, 0);
 			fputs("</a>", output);
+			free(sid); free(scls); free(sextra);
 		}
 		return q + 1 - b;
 	}
