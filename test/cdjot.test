@@ -267,3 +267,36 @@ _emph_{#id .cls key=val}
 .
 <p><em id="id" class="cls" key="val">emph</em></p>
 ```
+
+Tight/loose list detection must not look past the end of the list.
+A later loose list in the same document should not cause an earlier
+tight list to be rendered as loose.
+
+```
+- a
+- b
+
+text
+
+- x
+
+- y
+.
+<ul>
+<li>
+a
+</li>
+<li>
+b
+</li>
+</ul>
+<p>text</p>
+<ul>
+<li>
+<p>x</p>
+</li>
+<li>
+<p>y</p>
+</li>
+</ul>
+```
