@@ -408,3 +408,36 @@ label text, not emitted literally.
 .
 <p><img alt="alt foo here" src="/img.png"></p>
 ```
+
+Reference definition URLs may not contain internal whitespace
+(per spec: "None of the chunks of the URL may contain internal
+whitespace"). If the line has content after the URL, it is not a
+valid ref def and renders as a paragraph.
+
+```
+[foo]: http://example.com "title"
+
+[foo][]
+.
+<p>[foo]: http://example.com “title”</p>
+<p><a>foo</a></p>
+```
+
+```
+[foo]: http://example.com extra
+
+[foo][]
+.
+<p>[foo]: http://example.com extra</p>
+<p><a>foo</a></p>
+```
+
+A URL without trailing content is a valid ref def and resolves.
+
+```
+[foo]: http://example.com
+
+[foo][]
+.
+<p><a href="http://example.com">foo</a></p>
+```
