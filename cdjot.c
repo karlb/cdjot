@@ -1566,13 +1566,13 @@ dolist(const char *b, const char *e, int n)
 				int lsp = spaces(scan, e);
 				if (lsp == sp) {
 					int st2; char d2, m2;
-					if (scan_marker(scan + lsp, e, &st2,
-					    &(int){0}, &d2, &m2)) {
-						if (style == 0 ?
-						    (st2 != 0 || m2 != mch) :
-						    (d2 != delim))
-							break;
-					}
+					if (!scan_marker(scan + lsp, e, &st2,
+					    &(int){0}, &d2, &m2))
+						break; /* non-marker: list ended */
+					if (style == 0 ?
+					    (st2 != 0 || m2 != mch) :
+					    (d2 != delim))
+						break;
 					prev_at_top = 1;
 				} else {
 					prev_at_top = 0;
