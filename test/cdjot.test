@@ -441,3 +441,31 @@ A URL without trailing content is a valid ref def and resolves.
 .
 <p><a href="http://example.com">foo</a></p>
 ```
+
+Indented continuation that starts with `-` must not be treated as a
+real sub-list. In djot, nested lists require a blank-line separator
+between parent and nested marker. Without a blank line, the indented
+text is literal continuation of the parent item, and a paragraph
+after the blank line following the list must not be absorbed as
+lazy continuation.
+
+```
+- a
+    - sub
+- b
+    - sub
+
+Para.
+.
+<ul>
+<li>
+a
+- sub
+</li>
+<li>
+b
+- sub
+</li>
+</ul>
+<p>Para.</p>
+```
