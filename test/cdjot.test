@@ -161,3 +161,24 @@ baz
 </li>
 </ul>
 ```
+
+Inline attributes on links: {key=val}, {.class}, {#id} after
+[text](url) should attach to the <a> element.
+
+```
+[a](b){rel=me}
+.
+<p><a href="b" rel="me">a</a></p>
+```
+
+```
+[a](b){rel="me"}
+.
+<p><a href="b" rel="me">a</a></p>
+```
+
+```
+[a](b){.cls #id}
+.
+<p><a href="b" id="id" class="cls">a</a></p>
+```
