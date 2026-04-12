@@ -732,7 +732,9 @@ dodeflist(const char *b, const char *e, int n)
 	if (p >= e || *p != ':') return 0;
 	if (p + 1 >= e || (p[1] != ' ' && p[1] != '\n')) return 0;
 
-	fputs("<dl>\n", output);
+	fputs("<dl", output);
+	emit_pending();
+	fputs(">\n", output);
 
 	line = b;
 	while (line < e) {
