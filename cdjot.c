@@ -1017,6 +1017,17 @@ dorefdef(const char *b, const char *e, int n)
 	if (p >= e || *p != ']') return 0;
 	p++;
 	if (p >= e || *p != ':') return 0;
+	p++;
+	/* reject if URL chunk on this line has internal whitespace
+	 * (spec: "None of the chunks of the URL may contain internal
+	 * whitespace") */
+	if (!is_footnote) {
+		const char *up = p;
+		while (up < e && (*up == ' ' || *up == '\t')) up++;
+		while (up < e && *up != ' ' && *up != '\t' && *up != '\n') up++;
+		while (up < e && (*up == ' ' || *up == '\t')) up++;
+		if (up < e && *up != '\n') return 0;
+	}
 	clear_pending();
 	line = eol(b, e);
 	if (is_footnote) {
@@ -2969,9 +2980,23 @@ prescan(const char *b, const char *e)
 					while (p < e && (*p == ' ' || *p == '\t')) p++;
 					urlbuflen = 0;
 					if (p < e && *p != '\n') {
-						const char *ue = p;
-						while (ue < e && *ue != '\n') ue++;
-						urlbuf_add(p, ue);
+						const char *us = p;
+						const char *ue = us;
+						while (ue < e && *ue != ' ' && *ue != '\t'
+						    && *ue != '\n') ue++;
+						/* reject ref def if URL chunk has trailing
+						 * non-whitespace content (spec: no internal
+						 * whitespace in URL chunks) */
+						{
+							const char *tr = ue;
+							while (tr < e && (*tr == ' ' || *tr == '\t'))
+								tr++;
+							if (tr < e && *tr != '\n') {
+								line = eol(line, e);
+								continue;
+							}
+						}
+						urlbuf_add(us, ue);
 					}
 					const char *nextline = eol(line, e);
 					while (nextline < e) {
