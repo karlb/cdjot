@@ -182,3 +182,88 @@ Inline attributes on links: {key=val}, {.class}, {#id} after
 .
 <p><a href="b" id="id" class="cls">a</a></p>
 ```
+
+Inline attributes on emphasis should attach to the element,
+not wrap in a <span>.
+
+```
+_emph_{.a}
+.
+<p><em class="a">emph</em></p>
+```
+
+```
+*strong*{.a}
+.
+<p><strong class="a">strong</strong></p>
+```
+
+Inline attributes on sub/superscript:
+
+```
+~sub~{.a}
+.
+<p><sub class="a">sub</sub></p>
+```
+
+```
+^sup^{.a}
+.
+<p><sup class="a">sup</sup></p>
+```
+
+Inline attributes on insert/delete/mark:
+
+```
+{+ins+}{.a}
+.
+<p><ins class="a">ins</ins></p>
+```
+
+```
+{-del-}{.a}
+.
+<p><del class="a">del</del></p>
+```
+
+```
+{=mark=}{.a}
+.
+<p><mark class="a">mark</mark></p>
+```
+
+Inline attributes on code spans:
+
+```
+`code`{.a}
+.
+<p><code class="a">code</code></p>
+```
+
+```
+`code`{key="value"}
+.
+<p><code key="value">code</code></p>
+```
+
+Inline attributes on autolinks:
+
+```
+<https://example.com>{.a}
+.
+<p><a href="https://example.com" class="a">https://example.com</a></p>
+```
+
+```
+<https://example.com>{#id .cls}
+.
+<p><a href="https://example.com" id="id" class="cls">https://example.com</a></p>
+```
+
+Combined inline attributes with id, class, and key=val:
+
+```
+_emph_{#id .cls key=val}
+.
+<p><em id="id" class="cls" key="val">emph</em></p>
+```
