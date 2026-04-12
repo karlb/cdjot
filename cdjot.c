@@ -552,8 +552,8 @@ is_sep_row(const char *b, const char *e, int **aligns, int *cap_al, int *ncols)
 	int n = 0;
 	if (p >= e || *p != '|') return 0;
 	p++;
+	/* no leading space allowed after the opening | (djot.js rule) */
 	while (p < e && *p != '\n') {
-		while (p < e && *p == ' ') p++;
 		int left = 0, right = 0;
 		if (p < e && *p == ':') { left = 1; p++; }
 		if (p >= e || *p != '-') return 0;
@@ -563,8 +563,10 @@ is_sep_row(const char *b, const char *e, int **aligns, int *cap_al, int *ncols)
 		GROWA(*aligns, n, *cap_al);
 		(*aligns)[n] = left && right ? 3 : left ? 1 : right ? 2 : 0;
 		n++;
-		if (p < e && *p == '|') p++;
-		else break;
+		if (p >= e || *p != '|') break;
+		p++;
+		/* optional space after | for next cell */
+		while (p < e && *p == ' ') p++;
 	}
 	*ncols = n;
 	return n > 0;
