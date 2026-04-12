@@ -929,9 +929,24 @@ doattr(const char *b, const char *e, int n)
 	p = b;
 	while (p < e && (*p == ' ' || *p == '\t')) p++;
 	if (p >= e || *p != '{') return 0;
-	/* find matching } — may span multiple lines */
-	q = p + 1;
-	while (q < e && *q != '}') q++;
+	/* find matching } — may span multiple lines, but continuation
+	 * lines must be indented beyond the opening { (djot.js rule). */
+	{
+		int open_col = p - b; /* indentation of opening { */
+		q = p + 1;
+		while (q < e && *q != '}') {
+			if (*q == '\n') {
+				const char *nl = q + 1;
+				int nsp = 0;
+				while (nl < e && *nl == ' ') { nl++; nsp++; }
+				if (nsp <= open_col || nl >= e || *nl == '\n')
+					return 0;
+				q = nl;
+				continue;
+			}
+			q++;
+		}
+	}
 	if (q >= e || *q != '}') return 0;
 	{
 		const char *r = q + 1;
@@ -2687,13 +2702,13 @@ doreplace(const char *b, const char *e, int n)
 	int can_open, can_close;
 	if (n) return 0;
 
-	/* inline comment: {% ... %} — consume without output */
+	/* inline comment: {% ... %} — consume without output. Single
+	 * line only; multi-line {% %} is handled at block level by doattr. */
 	if (*b == '{' && b + 1 < e && b[1] == '%') {
 		const char *q = b + 2;
-		while (q < e) {
+		while (q < e && *q != '\n') {
 			if (*q == '%' && q + 1 < e && q[1] == '}')
 				return q + 2 - b;
-			/* comments can span lines */
 			q++;
 		}
 		return 0;
