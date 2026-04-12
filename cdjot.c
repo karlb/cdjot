@@ -2416,6 +2416,16 @@ altprint(const char *b, const char *e)
 				b = q - 1;
 				continue;
 			}
+			if (q < e && *q == '[') {
+				/* reference link: [text][ref] or [text][] */
+				const char *r = q + 1;
+				while (r < e && *r != ']') r++;
+				if (r < e && *r == ']') {
+					altprint(b + 1, q - 1);
+					b = r;
+					continue;
+				}
+			}
 		}
 		hprint(b, b + 1);
 		next:;
