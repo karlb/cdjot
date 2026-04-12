@@ -2047,6 +2047,11 @@ dolinebreak(const char *b, const char *e, int n)
 			fputs("<br>\n", output);
 			return p + 1 - b;
 		}
+		/* trailing backslash at end of paragraph content */
+		if (p >= e) {
+			fputs("<br>\n", output);
+			return p - b;
+		}
 		if (b + 1 < e && b[1] == ' ') {
 			fputs("&nbsp;", output);
 			return 2;
