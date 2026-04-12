@@ -1698,7 +1698,10 @@ dolist(const char *b, const char *e, int n)
 				line = q;
 				continue;
 			}
-			/* after blank: allow lazy if last content was a sub-list */
+			/* after blank: allow lazy if last content was a sub-list.
+			 * A real sub-list is preceded by a blank line in the
+			 * buffer; otherwise the marker-looking line is just
+			 * indented literal content of the parent item. */
 			{
 				const char *lb = buf + i;
 				/* skip trailing blanks in buffer */
@@ -1707,9 +1710,12 @@ dolist(const char *b, const char *e, int n)
 				{
 					const char *ls = lb;
 					while (ls > buf && ls[-1] != '\n') ls--;
+					int preceded_by_blank = (ls >= buf + 2
+					    && ls[-1] == '\n' && ls[-2] == '\n');
 					int st2;
 					char d2, m2;
-					if (scan_marker(ls + spaces(ls, lb), lb,
+					if (preceded_by_blank && scan_marker(
+					    ls + spaces(ls, lb), lb,
 					    &st2, &(int){0}, &d2, &m2)) {
 						/* last content is sub-list: lazy OK */
 						q = eol(line, e);
