@@ -300,3 +300,47 @@ b
 </li>
 </ul>
 ```
+
+Table separator rows must have no leading space after the opening |.
+`| --- | --- |` is not a separator because the first cell starts with
+a space. This matches djot.js behavior.
+
+```
+| a | b |
+| --- | --- |
+| c | d |
+.
+<table>
+<tr>
+<td>a</td>
+<td>b</td>
+</tr>
+<tr>
+<td>---</td>
+<td>---</td>
+</tr>
+<tr>
+<td>c</td>
+<td>d</td>
+</tr>
+</table>
+```
+
+No leading space: it IS a separator.
+
+```
+| a | b |
+|---|---|
+| c | d |
+.
+<table>
+<tr>
+<th>a</th>
+<th>b</th>
+</tr>
+<tr>
+<td>c</td>
+<td>d</td>
+</tr>
+</table>
+```
