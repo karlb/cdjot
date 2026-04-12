@@ -389,3 +389,22 @@ Hello.
 .
 <p>Hello.</p>
 ```
+
+Reference links inside image alt text should be resolved to their
+label text, not emitted literally.
+
+```
+[foo]: http://example.com/foo
+
+![alt with [foo][] text](/img.png)
+.
+<p><img alt="alt with foo text" src="/img.png"></p>
+```
+
+```
+[foo]: http://example.com/foo
+
+![alt [foo][foo] here](/img.png)
+.
+<p><img alt="alt foo here" src="/img.png"></p>
+```
