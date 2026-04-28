@@ -21,8 +21,6 @@
 	(arr) = realloc((arr), (cap) * sizeof(*(arr))); \
 	if (!(arr)) die("malloc"); } } while(0)
 
-typedef int (*Parser)(const char *, const char *, int);
-
 static int dotable(const char *b, const char *e, int n);
 static int dodeflist(const char *b, const char *e, int n);
 static int dodiv(const char *b, const char *e, int n);
@@ -46,12 +44,6 @@ static void clear_pending(void);
 static int has_pending(void);
 static void emit_attrs(const char *id, const char *cls, const char *extra);
 static void emit_pending(void);
-
-static Parser parsers[] = {
-	doattr, dorefdef, doheading, doblockquote, docodefence, dodiv,
-	dothematicbreak, dotable, dodeflist, dolist, doparagraph,
-	dolinebreak, docode, dosurround, dolink, doautolink, doreplace,
-};
 
 /* Converter state — global for simplicity (smu-style). Not thread-safe;
  * reset at the start of each cdjot_convert() call. */
@@ -2883,7 +2875,6 @@ process(const char *b, const char *e, int newblock)
 	const char *p;
 	const char *save_base = proc_base;
 	int affected;
-	unsigned int i;
 
 	proc_base = b;
 	for (p = b; p < e; ) {
@@ -2900,9 +2891,85 @@ process(const char *b, const char *e, int newblock)
 				clear_pending();
 		}
 
-		for (i = 0; i < LEN(parsers); i++)
-			if ((affected = parsers[i](p, e, newblock)))
+		affected = 0;
+		if (newblock) {
+			/* dispatch block parsers by first non-space byte */
+			const char *q = p;
+			while (q < e && (*q == ' ' || *q == '\t')) q++;
+			if (q < e) {
+				switch ((unsigned char)*q) {
+				case '{': affected = doattr(p, e, 1); break;
+				case '[': affected = dorefdef(p, e, 1); break;
+				case '#': affected = doheading(p, e, 1); break;
+				case '>': affected = doblockquote(p, e, 1); break;
+				case '`':
+				case '~': affected = docodefence(p, e, 1); break;
+				case ':':
+					if (!(affected = dodiv(p, e, 1)))
+						affected = dodeflist(p, e, 1);
+					break;
+				case '*':
+				case '-':
+					if (!(affected = dothematicbreak(p, e, 1)))
+						affected = dolist(p, e, 1);
+					break;
+				case '+':
+				case '(':
+				case '0': case '1': case '2': case '3': case '4':
+				case '5': case '6': case '7': case '8': case '9':
+					affected = dolist(p, e, 1);
+					break;
+				case '|': affected = dotable(p, e, 1); break;
+				default:
+					if ((*q >= 'a' && *q <= 'z')
+					    || (*q >= 'A' && *q <= 'Z'))
+						affected = dolist(p, e, 1);
+					break;
+				}
+			}
+			if (!affected)
+				affected = doparagraph(p, e, 1);
+		} else {
+			/* dispatch inline parsers by first byte */
+			switch ((unsigned char)*p) {
+			case '\\':
+			case '\n':
+				affected = dolinebreak(p, e, 0);
 				break;
+			case '`':
+			case '$':
+				affected = docode(p, e, 0);
+				break;
+			case '_':
+			case '*':
+			case '~':
+			case '^':
+				affected = dosurround(p, e, 0);
+				break;
+			case '{':
+				if (!(affected = dosurround(p, e, 0)))
+					affected = doreplace(p, e, 0);
+				break;
+			case '[':
+			case '!':
+				affected = dolink(p, e, 0);
+				break;
+			case '<':
+				if (!(affected = doautolink(p, e, 0)))
+					affected = doreplace(p, e, 0);
+				break;
+			case '-':
+			case '.':
+			case '\'':
+			case '"':
+			case ' ':
+			case '\t':
+			case '&':
+			case '>':
+				affected = doreplace(p, e, 0);
+				break;
+			}
+		}
 
 		if (affected) {
 			p += abs(affected);
