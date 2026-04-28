@@ -1,6 +1,6 @@
 PREFIX = /usr/local
 
-CFLAGS = -std=c99 -Wall -Wextra -pedantic -Os
+CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2
 LDFLAGS =
 
 cdjot: cdjot.c
