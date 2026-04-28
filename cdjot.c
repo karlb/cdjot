@@ -56,7 +56,7 @@ static Parser parsers[] = {
 /* Converter state — global for simplicity (smu-style). Not thread-safe;
  * reset at the start of each cdjot_convert() call. */
 static struct {
-	const char *label; int labellen;
+	char *norm; int normlen;
 	const char *url; int urllen;
 	char *attrs;
 } *refs;
@@ -197,49 +197,73 @@ skip_blanks(const char *p, const char *e)
 	return p;
 }
 
+/* Normalize a reference label for comparison: drop _ and *, collapse
+ * whitespace runs to a single space, trim leading/trailing whitespace.
+ * Output buffer must hold at least `len` bytes; the result is never
+ * longer than the input. Returns the number of bytes written. */
 static int
-label_match(const char *a, int alen, const char *b, int blen)
+normalize_label(const char *s, int len, char *out)
 {
-	int ai = 0, bi = 0;
-	while (ai < alen && bi < blen) {
-		/* skip emphasis markers */
-		if (a[ai] == '_' || a[ai] == '*') { ai++; continue; }
-		if (b[bi] == '_' || b[bi] == '*') { bi++; continue; }
-		if (isws(a[ai]) && isws(b[bi])) {
-			while (ai < alen && isws(a[ai])) ai++;
-			while (bi < blen && isws(b[bi])) bi++;
-		} else if (a[ai] == b[bi]) {
-			ai++; bi++;
+	int i, o = 0, last_was_ws = 1;
+	for (i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)s[i];
+		if (c == '_' || c == '*') continue;
+		if (isws(c)) {
+			if (!last_was_ws) {
+				out[o++] = ' ';
+				last_was_ws = 1;
+			}
 		} else {
-			return 0;
+			out[o++] = c;
+			last_was_ws = 0;
 		}
 	}
-	while (ai < alen && (isws(a[ai]) || a[ai] == '_' || a[ai] == '*')) ai++;
-	while (bi < blen && (isws(b[bi]) || b[bi] == '_' || b[bi] == '*')) bi++;
-	return ai == alen && bi == blen;
+	if (o > 0 && out[o-1] == ' ') o--;
+	return o;
 }
 
 static int
 findref(const char *label, int len, const char **url, int *urllen)
 {
-	int i;
+	char stack[1024], *buf = stack, *heap = NULL;
+	int nlen, i, found = 0;
+	if (len > (int)sizeof(stack)) {
+		heap = malloc(len);
+		if (!heap) return 0;
+		buf = heap;
+	}
+	nlen = normalize_label(label, len, buf);
 	for (i = 0; i < nrefs; i++)
-		if (label_match(refs[i].label, refs[i].labellen, label, len)) {
+		if (refs[i].normlen == nlen
+		    && !memcmp(refs[i].norm, buf, nlen)) {
 			*url = refs[i].url;
 			*urllen = refs[i].urllen;
-			return i + 1; /* return 1-based index */
+			found = i + 1; /* 1-based index */
+			break;
 		}
-	return 0;
+	free(heap);
+	return found;
 }
 
 static int
 findref_range(const char *label, int len, int lo, int hi)
 {
-	int i;
+	char stack[1024], *buf = stack, *heap = NULL;
+	int nlen, i, found = 0;
+	if (len > (int)sizeof(stack)) {
+		heap = malloc(len);
+		if (!heap) return 0;
+		buf = heap;
+	}
+	nlen = normalize_label(label, len, buf);
 	for (i = lo; i < hi; i++)
-		if (label_match(refs[i].label, refs[i].labellen, label, len))
-			return 1;
-	return 0;
+		if (refs[i].normlen == nlen
+		    && !memcmp(refs[i].norm, buf, nlen)) {
+			found = 1;
+			break;
+		}
+	free(heap);
+	return found;
 }
 
 
@@ -3028,8 +3052,11 @@ prescan(const char *b, const char *e)
 							memcpy(u, urlbuf, urlbuflen);
 							u[urlbuflen] = '\0';
 						}
-						refs[nrefs].label = label;
-						refs[nrefs].labellen = labellen;
+						char *nbuf = malloc(labellen);
+						if (!nbuf) die("malloc");
+						refs[nrefs].normlen =
+						    normalize_label(label, labellen, nbuf);
+						refs[nrefs].norm = nbuf;
 						refs[nrefs].url = u;
 						refs[nrefs].urllen = urlbuflen;
 						refs[nrefs].attrs = NULL;
@@ -3100,8 +3127,11 @@ prescan(const char *b, const char *e)
 					memcpy(u + 1, idbuf, idn);
 					u[ulen] = '\0';
 					GROWA(refs, nrefs, cap_refs);
-					refs[nrefs].label = hdefs[hi].content;
-					refs[nrefs].labellen = hdefs[hi].len;
+					char *nbuf = malloc(hdefs[hi].len);
+					if (!nbuf) die("malloc");
+					refs[nrefs].normlen = normalize_label(
+					    hdefs[hi].content, hdefs[hi].len, nbuf);
+					refs[nrefs].norm = nbuf;
 					refs[nrefs].url = u;
 					refs[nrefs].urllen = ulen;
 					refs[nrefs].attrs = malloc(1);
@@ -3238,6 +3268,7 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	emit_endnotes();
 
 	for (i = 0; i < nrefs; i++) {
+		free(refs[i].norm);
 		free((char *)refs[i].url);
 		free(refs[i].attrs);
 	}
