@@ -1,12 +1,14 @@
 /* cdjot - djot to HTML converter
  * No dependencies beyond libc.
  */
+#define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "cdjot.h"
 
@@ -3448,6 +3450,25 @@ readall(FILE *f, int *outlen)
 {
 	char *buf = NULL;
 	int len = 0, cap = 0, n;
+	struct stat st;
+
+	/* If the fd backs a regular file, fstat tells us the size and we can
+	 * allocate exactly once. Otherwise (pipe, terminal) fall through to
+	 * doubling growth. */
+	if (fstat(fileno(f), &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+		cap = st.st_size + 1;
+		buf = malloc(cap);
+		if (!buf) die("malloc");
+		while ((n = fread(buf + len, 1, cap - len, f)) > 0)
+			len += n;
+		if (!ferror(f)) {
+			*outlen = len;
+			return buf;
+		}
+		free(buf);
+		*outlen = 0;
+		return NULL;
+	}
 
 	do {
 		cap = cap ? cap * 2 : BUFSIZ;
