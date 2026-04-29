@@ -1,0 +1,135 @@
+# libFuzzer / AFL dictionary for djot syntax tokens.
+# Helps the fuzzer reach deep grammar states (links, fences, attrs, footnotes,
+# tables, divs, defs) that random byte mutation rarely produces.
+
+# Inline emphasis / sub-super / mark / insert / delete
+"_"
+"*"
+"^"
+"~"
+"{_"
+"_}"
+"{*"
+"*}"
+"{^"
+"^}"
+"{~"
+"~}"
+"{+"
+"+}"
+"{-"
+"-}"
+"{="
+"=}"
+
+# Code spans / verbatim
+"`"
+"``"
+"```"
+"````"
+"```\n"
+"```\n.\n```\n"
+
+# Math
+"$`"
+"$$`"
+"`$"
+
+# Links and images
+"["
+"]"
+"]("
+")"
+"]["
+"![]("
+"[^"
+"]: "
+"[label]"
+"[label][]"
+"[label]: http://x"
+"[^fn]"
+"[^fn]: text"
+
+# Attributes
+"{"
+"}"
+"{#id}"
+"{.cls}"
+"{key=val}"
+"{key=\"v\"}"
+"{%comment%}"
+
+# Block constructs
+"# "
+"## "
+"### "
+"###### "
+"> "
+"- "
+"* "
+"+ "
+"1. "
+"i. "
+"a. "
+"A. "
+"I. "
+"(1) "
+"1) "
+"- [ ] "
+"- [x] "
+": term\n  def"
+":::"
+":::: div"
+"---"
+"***"
+"___"
+"   * * *"
+
+# Tables
+"|"
+"| h |\n|---|\n| c |\n"
+"|:---|"
+"|---:|"
+"|:---:|"
+"^ caption"
+
+# Code fences with language / attrs
+"```python\n"
+"```{=html}\n"
+
+# Raw HTML / inline raw
+"`code`{=html}"
+
+# Hard line breaks / escapes
+"\\\n"
+"\\!"
+"\\*"
+"\\_"
+"\\["
+"\\]"
+"\\{"
+"\\}"
+"\\`"
+
+# Smart punctuation triggers
+"---"
+"--"
+"..."
+"\"hi\""
+"'hi'"
+
+# Section / heading auto-refs
+"# Section"
+"# A {#myid}"
+
+# Pathological starts
+"\n"
+"\n\n"
+"\r\n"
+"\t"
+"   "
+"\xc2\xa0"
+"\xe2\x80\x9c"
+"\xe2\x80\x9d"
+"\xe2\x80\x98"
+"\xe2\x80\x99"

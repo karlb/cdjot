@@ -3,6 +3,11 @@ PREFIX = /usr/local
 CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2
 LDFLAGS =
 
+# Fuzzing config (overridable: `make fuzz FUZZ_CC=clang-15`)
+FUZZ_CC ?= clang
+FUZZ_CFLAGS = -std=c99 -g -O1 -DCDJOT_NO_MAIN
+FUZZ_SAN = -fsanitize=address,undefined -fno-sanitize-recover=undefined
+
 cdjot: cdjot.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cdjot.c
 
@@ -18,4 +23,46 @@ install: cdjot
 bench: cdjot
 	sh bench.sh
 
-.PHONY: clean test install bench
+# --- Fuzzing -----------------------------------------------------------------
+# `make fuzz`         build libFuzzer harness (requires clang + compiler-rt fuzzer)
+# `make fuzz-afl`     build AFL++ persistent-mode harness (requires afl-clang-fast)
+# `make fuzz-asan`    build standalone batch driver (ASan/UBSan, no fuzzer rt needed)
+# `make fuzz-corpus`  extract seed inputs from test/*.test into fuzz/corpus/
+# `make fuzz-run`     fuzz/cdjot-fuzz with corpus + dictionary
+# `make fuzz-replay`  replay fuzz/corpus through fuzz/cdjot-asan to catch crashes
+# `make fuzz-clean`   remove fuzz build artifacts (keeps corpus dir)
+
+fuzz: fuzz/cdjot-fuzz
+
+fuzz/cdjot-fuzz: fuzz/fuzz_cdjot.c cdjot.c cdjot.h
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -fsanitize=fuzzer,address,undefined \
+		-fno-sanitize-recover=undefined \
+		-o $@ fuzz/fuzz_cdjot.c cdjot.c
+
+fuzz-afl: fuzz/cdjot-fuzz-afl
+
+fuzz/cdjot-fuzz-afl: fuzz/fuzz_cdjot.c cdjot.c cdjot.h
+	afl-clang-fast $(FUZZ_CFLAGS) $(FUZZ_SAN) \
+		-o $@ fuzz/fuzz_cdjot.c cdjot.c
+
+fuzz-asan: fuzz/cdjot-asan
+
+fuzz/cdjot-asan: fuzz/fuzz_cdjot.c cdjot.c cdjot.h
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -DFUZZ_STANDALONE $(FUZZ_SAN) \
+		-o $@ fuzz/fuzz_cdjot.c cdjot.c
+
+fuzz-corpus:
+	sh fuzz/extract_seeds.sh
+
+fuzz-run: fuzz/cdjot-fuzz fuzz-corpus
+	cd fuzz && ./cdjot-fuzz -dict=cdjot.dict -max_len=8192 corpus/
+
+fuzz-replay: fuzz/cdjot-asan fuzz-corpus
+	./fuzz/cdjot-asan fuzz/corpus/*.dj
+
+fuzz-clean:
+	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot-asan
+	rm -rf fuzz/crashes
+
+.PHONY: clean test install bench fuzz fuzz-afl fuzz-asan fuzz-corpus \
+	fuzz-run fuzz-replay fuzz-clean

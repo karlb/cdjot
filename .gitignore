@@ -1,2 +1,8 @@
 cdjot
 *.o
+fuzz/cdjot-fuzz
+fuzz/cdjot-fuzz-afl
+fuzz/cdjot-asan
+fuzz/corpus/
+fuzz/crashes/
+fuzz/findings/

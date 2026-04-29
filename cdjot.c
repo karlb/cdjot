@@ -3445,6 +3445,7 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	return 0;
 }
 
+#ifndef CDJOT_NO_MAIN
 static char *
 readall(FILE *f, int *outlen)
 {
@@ -3562,3 +3563,4 @@ main(int argc, char *argv[])
 	}
 	return ret;
 }
+#endif /* CDJOT_NO_MAIN */
