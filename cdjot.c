@@ -134,8 +134,8 @@ hprint(const char *b, const char *e)
 static const char *
 eol(const char *p, const char *e)
 {
-	while (p < e && *p != '\n') p++;
-	return p < e ? p + 1 : e;
+	const char *nl = memchr(p, '\n', e - p);
+	return nl ? nl + 1 : e;
 }
 
 static int
