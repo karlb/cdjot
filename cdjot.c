@@ -3385,8 +3385,10 @@ int
 main(int argc, char *argv[])
 {
 	int i, ret = 0;
+	static char stdout_buf[64 * 1024];
 
 	signal(SIGPIPE, SIG_DFL);
+	setvbuf(stdout, stdout_buf, _IOFBF, sizeof(stdout_buf));
 
 	for (i = 1; i < argc; i++) {
 		if (!strcmp("-v", argv[i]) || !strcmp("--version", argv[i])) {
