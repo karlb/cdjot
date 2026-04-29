@@ -963,7 +963,7 @@ dodiv(const char *b, const char *e, int n)
 		int s = spaces(q, e);
 		q += s;
 		/* track code fence state */
-		if ((*q == '`' || *q == '~') && leadc(q, e, *q) >= 3) {
+		if (q < e && (*q == '`' || *q == '~') && leadc(q, e, *q) >= 3) {
 			char cfch = *q;
 			int cflen = leadc(q, e, cfch);
 			if (!in_code) {
