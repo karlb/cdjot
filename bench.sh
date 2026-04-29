@@ -3,6 +3,11 @@
 #
 # Requires: hyperfine (perf), valgrind (memory)
 # Missing tools are skipped with a message.
+#
+# Optional: realistic benchmark files (pandoc-manual.dj, tartan-wikipedia.dj)
+# from https://github.com/dlc-01/djot-implementations. Set BENCH_FILES to a
+# directory containing them and they will be used in addition to the
+# synthetic input. Files are not bundled (GPL / CC-BY-SA encumbered).
 
 set -e
 
@@ -12,10 +17,14 @@ INPUT_10M="$TMPDIR/cdjot-bench-10m.txt"
 REPS=80
 
 # --- Generate ~1MB input from test files ---
-# Extract only the input sections (before the . separator) from test files
+# Extract only the input sections (before the . separator) from test files.
+# Skip fenced_divs.test: it contains spec examples of intentionally-malformed
+# fences (open with N colons, "close" with fewer) which, when concatenated and
+# repeated, cause O(N^2) scan-to-EOF behavior that swamps real measurements.
 : > "$INPUT_1M"
 for i in $(seq 1 $REPS); do
 	for f in test/*.test; do
+		case "$f" in *fenced_divs.test) continue ;; esac
 		state="outside"
 		while IFS= read -r line; do
 			case "$state" in
@@ -48,18 +57,40 @@ echo ""
 fail=0
 
 # --- Performance benchmark (hyperfine) ---
+# Build a list of additional implementations to compare against
+# (djot.js, jotdown — both optional, only included if present).
+hf_extras=""
+if command -v djot >/dev/null 2>&1; then
+	hf_extras="$hf_extras djot"
+fi
+if command -v jotdown >/dev/null 2>&1; then
+	hf_extras="$hf_extras jotdown"
+fi
+
 if command -v hyperfine >/dev/null 2>&1; then
+	# Realistic inputs first, if BENCH_FILES is set and the files exist.
+	if [ -n "$BENCH_FILES" ]; then
+		for name in pandoc-manual.dj tartan-wikipedia.dj; do
+			[ -f "$BENCH_FILES/$name" ] || continue
+			echo "=== Performance ($name) ==="
+			cmds="./cdjot < $BENCH_FILES/$name > /dev/null"
+			for impl in $hf_extras; do
+				cmds="$cmds|$impl < $BENCH_FILES/$name > /dev/null"
+			done
+			IFS='|'; set -- $cmds; unset IFS
+			hyperfine --warmup 3 --max-runs 20 "$@"
+			echo ""
+		done
+	fi
 	for input in "$INPUT_1M" "$INPUT_10M"; do
 		label=$(basename "$input" .txt | sed 's/cdjot-bench-//')
 		echo "=== Performance ($label) ==="
-		if command -v djot >/dev/null 2>&1; then
-			hyperfine --warmup 3 --max-runs 10 \
-				"./cdjot < $input > /dev/null" \
-				"djot < $input > /dev/null"
-		else
-			echo "(install @djot/djot globally for comparison benchmark)"
-			hyperfine --warmup 3 --max-runs 10 "./cdjot < $input > /dev/null"
-		fi
+		cmds="./cdjot < $input > /dev/null"
+		for impl in $hf_extras; do
+			cmds="$cmds|$impl < $input > /dev/null"
+		done
+		IFS='|'; set -- $cmds; unset IFS
+		hyperfine --warmup 3 --max-runs 10 "$@"
 		echo ""
 	done
 	echo ""
