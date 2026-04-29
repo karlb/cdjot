@@ -3193,7 +3193,8 @@ prescan(const char *b, const char *e)
 						GROWA(refs, nrefs, cap_refs);
 						char *u = malloc(urlbuflen + 1);
 						if (u) {
-							memcpy(u, urlbuf, urlbuflen);
+							if (urlbuflen > 0)
+								memcpy(u, urlbuf, urlbuflen);
 							u[urlbuflen] = '\0';
 						}
 						char *nbuf = malloc(labellen);
