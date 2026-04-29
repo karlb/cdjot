@@ -848,7 +848,7 @@ dodeflist(const char *b, const char *e, int n)
 		int term_is_fence = 0;
 		{
 			const char *tp = p;
-			char fc = *tp;
+			char fc = (tp < e) ? *tp : '\0';
 			if ((fc == '`' || fc == '~') && leadc(tp, eol(line, e), fc) >= 3)
 				term_is_fence = 1;
 			if (!term_is_fence) {
