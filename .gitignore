@@ -6,3 +6,6 @@ fuzz/cdjot-asan
 fuzz/corpus/
 fuzz/crashes/
 fuzz/findings/
+fuzz/afl-in/
+fuzz/afl-out/
+crash-*
