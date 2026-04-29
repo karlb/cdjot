@@ -398,16 +398,20 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			/* id */
 			p++;
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
-			    && *p != '}')
-				id[idn++] = *p++;
+			    && *p != '}') {
+				if (*p) id[idn++] = *p;
+				p++;
+			}
 			id[idn] = '\0';
 		} else if (*p == '.') {
 			/* class */
 			p++;
 			if (cn > 0) cls[cn++] = ' ';
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
-			    && *p != '}')
-				cls[cn++] = *p++;
+			    && *p != '}') {
+				if (*p) cls[cn++] = *p;
+				p++;
+			}
 			cls[cn] = '\0';
 		} else if (*p == '%') {
 			/* comment: skip to next % or end */
@@ -417,8 +421,10 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 		} else if (isalpha((unsigned char)*p)) {
 			/* key=val */
 			if (en > 0) extra[en++] = ' ';
-			while (p < e && *p != '=' && *p != ' ' && *p != '}')
-				extra[en++] = *p++;
+			while (p < e && *p != '=' && *p != ' ' && *p != '}') {
+				if (*p) extra[en++] = *p;
+				p++;
+			}
 			if (p < e && *p == '=') {
 				extra[en++] = '=';
 				p++;
@@ -437,18 +443,22 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 								en += 6;
 								p++;
 							} else {
-								extra[en++] = *p++;
+								if (*p) extra[en++] = *p;
+								p++;
 							}
 						} else {
-							extra[en++] = *p++;
+							if (*p) extra[en++] = *p;
+							p++;
 						}
 					}
 					if (p < e) { extra[en++] = '"'; p++; }
 				} else {
 					/* wrap unquoted value in quotes */
 					extra[en++] = '"';
-					while (p < e && *p != ' ' && *p != '}')
-						extra[en++] = *p++;
+					while (p < e && *p != ' ' && *p != '}') {
+						if (*p) extra[en++] = *p;
+						p++;
+					}
 					extra[en++] = '"';
 				}
 			}
@@ -464,10 +474,30 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 }
 
 static void
+oputs_attr(const char *s)
+{
+	for (; *s; s++) {
+		if (*s == '&')      oputs("&amp;");
+		else if (*s == '<') oputs("&lt;");
+		else if (*s == '>') oputs("&gt;");
+		else if (*s == '"') oputs("&quot;");
+		else                oputc(*s);
+	}
+}
+
+static void
 emit_attrs(const char *id, const char *cls, const char *extra)
 {
-	if (id && id[0]) oprintf(" id=\"%s\"", id);
-	if (cls && cls[0]) oprintf(" class=\"%s\"", cls);
+	if (id && id[0]) {
+		oputs(" id=\"");
+		oputs_attr(id);
+		oputc('"');
+	}
+	if (cls && cls[0]) {
+		oputs(" class=\"");
+		oputs_attr(cls);
+		oputc('"');
+	}
 	if (extra && extra[0]) oprintf(" %s", extra);
 }
 
