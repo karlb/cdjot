@@ -31,6 +31,7 @@ init_devnull(void)
 
 #ifdef __AFL_FUZZ_TESTCASE_LEN
 /* AFL++ persistent-mode entry point. */
+#include <unistd.h>  /* read() expanded by __AFL_FUZZ_TESTCASE_LEN */
 __AFL_FUZZ_INIT();
 
 int
