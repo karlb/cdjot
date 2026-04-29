@@ -2951,6 +2951,7 @@ process(const char *b, const char *e, int newblock)
 	const char *p;
 	const char *save_base = proc_base;
 	int affected;
+	int allow_block = newblock;
 
 	proc_base = b;
 	for (p = b; p < e; ) {
@@ -3053,7 +3054,7 @@ process(const char *b, const char *e, int newblock)
 			oputc(*p++);
 		}
 
-		if (p < e && p[0] == '\n' && p + 1 < e && p[1] == '\n')
+		if (allow_block && p < e && p[0] == '\n' && p + 1 < e && p[1] == '\n')
 			newblock = 1;
 		else
 			newblock = affected < 0;
