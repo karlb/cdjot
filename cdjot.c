@@ -73,8 +73,12 @@ static struct {
 } *refs;
 static int nrefs, cap_refs;
 
+/* Footnote labels are owned (malloc'd) because they can be added during
+ * inline processing from temporary recursion buffers (e.g. a list item's
+ * collection buffer that gets freed when the parent dolist returns). The
+ * conversion may still reference the same label later, so we copy. */
 static struct {
-	const char *label; int labellen;
+	char *label; int labellen;
 	char *content; int contentlen;
 	int used;
 	int num; /* sequential number assigned on first reference */
@@ -2597,10 +2601,14 @@ dolink(const char *b, const char *e, int n)
 			}
 			/* if not found, create an empty footnote entry */
 			if (found < 0) {
+				int ll = fe - fl;
+				char *lcpy = malloc(ll);
+				if (!lcpy) die("malloc");
+				memcpy(lcpy, fl, ll);
 				GROWA(footnotes, nfootnotes, cap_fn);
 				found = nfootnotes;
-				footnotes[found].label = fl;
-				footnotes[found].labellen = fe - fl;
+				footnotes[found].label = lcpy;
+				footnotes[found].labellen = ll;
 				footnotes[found].content = NULL;
 				footnotes[found].contentlen = 0;
 				footnotes[found].used = 0;
@@ -3121,8 +3129,11 @@ prescan(const char *b, const char *e)
 				ADDC(fnbuf, fni) = '\0';
 				fnbuf = realloc(fnbuf, fni + 1);
 				if (ll > 0) {
+					char *lcpy = malloc(ll);
+					if (!lcpy) die("malloc");
+					memcpy(lcpy, fl, ll);
 					GROWA(footnotes, nfootnotes, cap_fn);
-					footnotes[nfootnotes].label = fl;
+					footnotes[nfootnotes].label = lcpy;
 					footnotes[nfootnotes].labellen = ll;
 					footnotes[nfootnotes].content = fnbuf;
 					footnotes[nfootnotes].contentlen = fni;
@@ -3412,8 +3423,10 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 		free(refs[i].attrs);
 	}
 	free(refs);
-	for (i = 0; i < nfootnotes; i++)
+	for (i = 0; i < nfootnotes; i++) {
+		free(footnotes[i].label);
 		free(footnotes[i].content);
+	}
 	free(footnotes);
 	for (i = 0; i < id_ht_sz; i++)
 		free(id_ht[i].key);
