@@ -552,3 +552,15 @@ empty definition.
 </dd>
 </dl>
 ```
+
+A div whose content is only a whitespace line must not read past the
+end of the input buffer. Renders as an empty div.
+
+```
+:::
+
+:::
+.
+<div>
+</div>
+```
