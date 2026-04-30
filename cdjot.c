@@ -377,12 +377,18 @@ close_sections(int level)
 	}
 }
 
+/* Identifier/class/key/unquoted-value chars per djot.js: ASCII alnum
+ * plus _ : - (matches the spec's rule for unquoted key=value values). */
+#define IS_NAME_CHAR(c) (isalnum((unsigned char)(c)) \
+    || (c) == '_' || (c) == ':' || (c) == '-')
+
 static int
 parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap)
 {
 	const char *p = b;
 	int idn = 0, cn = 0, en = 0;
 	int len = e - b;
+	int valid = 1;
 	/* id/class need at most input length; extra needs more for &quot; expansion */
 	char *id = malloc(len + 1);
 	char *cls = malloc(len + 1);
@@ -391,7 +397,7 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 	if (!id || !cls || !extra) die("malloc");
 	id[0] = cls[0] = extra[0] = '\0';
 
-	while (p < e) {
+	while (p < e && valid) {
 		while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
 		if (p >= e) break;
 		if (*p == '#') {
@@ -399,7 +405,8 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			p++;
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
 			    && *p != '}') {
-				if (*p) id[idn++] = *p;
+				if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+				id[idn++] = *p;
 				p++;
 			}
 			id[idn] = '\0';
@@ -409,7 +416,8 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			if (cn > 0) cls[cn++] = ' ';
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
 			    && *p != '}') {
-				if (*p) cls[cn++] = *p;
+				if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+				cls[cn++] = *p;
 				p++;
 			}
 			cls[cn] = '\0';
@@ -422,9 +430,11 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			/* key=val */
 			if (en > 0) extra[en++] = ' ';
 			while (p < e && *p != '=' && *p != ' ' && *p != '}') {
-				if (*p) extra[en++] = *p;
+				if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+				extra[en++] = *p;
 				p++;
 			}
+			if (!valid) break;
 			if (p < e && *p == '=') {
 				extra[en++] = '=';
 				p++;
@@ -453,10 +463,11 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 					}
 					if (p < e) { extra[en++] = '"'; p++; }
 				} else {
-					/* wrap unquoted value in quotes */
+					/* unquoted value: same restricted char set */
 					extra[en++] = '"';
 					while (p < e && *p != ' ' && *p != '}') {
-						if (*p) extra[en++] = *p;
+						if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+						extra[en++] = *p;
 						p++;
 					}
 					extra[en++] = '"';
@@ -464,8 +475,16 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			}
 			extra[en] = '\0';
 		} else {
-			p++;
+			valid = 0;
+			break;
 		}
+	}
+	if (!valid) {
+		free(id); free(cls); free(extra);
+		if (idp) *idp = NULL;
+		if (clsp) *clsp = NULL;
+		if (extrap) *extrap = NULL;
+		return 0;
 	}
 	if (idp) *idp = id; else free(id);
 	if (clsp) *clsp = cls; else free(cls);

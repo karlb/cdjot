@@ -585,21 +585,25 @@ x</h1>
 </section>
 ```
 
-HTML special characters in id and class attribute values must be
-escaped on output. A literal " inside a class would otherwise close
-the HTML attribute and spill following text into attribute space; a
-literal < would produce an apparent tag.
+Identifier and class names accept only ASCII alphanumerics, `_`, `:`,
+and `-` (matching the spec's rule for unquoted key=value values, and
+matching djot.js). Any other character invalidates the entire
+attribute spec, which then renders as literal text. This prevents
+characters like `"` and `<` from being smuggled into HTML attribute
+contexts.
 
 ```
 {.x"y}
 foo
 .
-<p class="x&quot;y">foo</p>
+<p>{.x”y}
+foo</p>
 ```
 
 ```
 {#a<b}
 foo
 .
-<p id="a&lt;b">foo</p>
+<p>{#a&lt;b}
+foo</p>
 ```
