@@ -501,3 +501,29 @@ para2
 <p>para</p>
 <p>para2</p>
 ```
+
+A footnote reference inside a list item must remain valid after the
+list ends, because list items are processed in a temporary recursion
+buffer that is freed when the list returns. A later reference to the
+same undefined label must still resolve to the same footnote.
+
+```
+- [^a]
+
+then [^a]
+.
+<ul>
+<li>
+<a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a>
+</li>
+</ul>
+<p>then <a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></p>
+<section role="doc-endnotes">
+<hr>
+<ol>
+<li id="fn1">
+<p><a href="#fnref1" role="doc-backlink">↩︎</a></p>
+</li>
+</ol>
+</section>
+```
