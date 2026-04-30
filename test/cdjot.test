@@ -584,3 +584,22 @@ promoted the inline-only process() call to block mode and emitted a
 x</h1>
 </section>
 ```
+
+HTML special characters in id and class attribute values must be
+escaped on output. A literal " inside a class would otherwise close
+the HTML attribute and spill following text into attribute space; a
+literal < would produce an apparent tag.
+
+```
+{.x"y}
+foo
+.
+<p class="x&quot;y">foo</p>
+```
+
+```
+{#a<b}
+foo
+.
+<p id="a&lt;b">foo</p>
+```
