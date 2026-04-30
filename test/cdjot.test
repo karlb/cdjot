@@ -564,3 +564,23 @@ end of the input buffer. Renders as an empty div.
 <div>
 </div>
 ```
+
+A multi-line heading whose lazy continuation produces a blank line in
+the heading's inline content must not trigger block parsers on that
+content. The two `# x` lines below collapse via lazy continuation into
+the parent `# h` heading; the empty `#` line in the middle yields a
+blank line inside the heading's inline buffer, which previously
+promoted the inline-only process() call to block mode and emitted a
+`<p>` tag inside the unclosed `<h1>`.
+
+```
+# h
+#
+# x
+.
+<section id="h-x">
+<h1>h
+
+x</h1>
+</section>
+```
