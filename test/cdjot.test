@@ -527,3 +527,14 @@ then [^a]
 </ol>
 </section>
 ```
+
+A reference definition with no URL produces a link with an empty href.
+Internally the empty URL must not be passed as a NULL source to memcpy.
+
+```
+[link]:
+
+[link][]
+.
+<p><a href="">link</a></p>
+```
