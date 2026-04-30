@@ -538,3 +538,17 @@ Internally the empty URL must not be passed as a NULL source to memcpy.
 .
 <p><a href="">link</a></p>
 ```
+
+A definition list with just a term marker and nothing else must not
+read past the end of the input buffer. Produces an empty term and
+empty definition.
+
+```
+:
+.
+<dl>
+<dt></dt>
+<dd>
+</dd>
+</dl>
+```
