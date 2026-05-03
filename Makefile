@@ -151,7 +151,7 @@ fuzz-replay: fuzz/cdjot-fuzz fuzz-corpus
 # waiting on compute. Counter $$i (not %p) names each profraw because
 # PIDs can recycle inside a tight shell loop and clobber files.
 fuzz-cov: cdjot.c cdjot.h fuzz-corpus
-	$(FUZZ_CC) -std=c99 -O1 -g -fprofile-instr-generate -fcoverage-mapping \
+	$(FUZZ_CC) -std=c99 -O0 -g -fprofile-instr-generate -fcoverage-mapping \
 		-o fuzz/cdjot-cov cdjot.c
 	rm -rf fuzz/cov && mkdir fuzz/cov
 	@i=0; for f in fuzz/corpus/*; do \
