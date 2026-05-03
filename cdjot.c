@@ -3317,6 +3317,10 @@ prescan(const char *b, const char *e)
 						int ns = spaces(nextline, e);
 						if (ns == 0 || isblankline(nextline, eol(nextline, e)))
 							break;
+						/* a new refdef starts a sibling, not a
+						 * continuation — stop gobbling */
+						if (nextline + ns < e && nextline[ns] == '[')
+							break;
 						const char *le = eol(nextline, e);
 						urlbuf_add(nextline + ns, le);
 						nextline = le;
