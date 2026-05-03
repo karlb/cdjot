@@ -82,6 +82,22 @@ previous corpus is rotated to `corpus.bak` in case the merge goes
 sideways. This is the only place the two fuzzers share coverage —
 without it, AFL's discoveries never reach libFuzzer's runs.
 
+## Coverage analysis (one-shot)
+
+When the fuzzer plateaus, `make fuzz-cov` builds cdjot with LLVM
+source-based coverage, replays `corpus/` through it, and writes
+`fuzz/cov/coverage.txt` with per-line and per-branch counts. To see
+what the corpus never reached:
+
+```sh
+awk '/^ *0\|/' fuzz/cov/coverage.txt | less
+```
+
+Group hits by `do<construct>` parser to spot which djot grammar
+shapes are still dark. Faster to seed those by hand into `corpus/`
+or as compound entries in `cdjot.dict` than to wait for mutators to
+assemble them.
+
 ## Tuning levers
 
 If libFuzzer plateaus and you want to push further:

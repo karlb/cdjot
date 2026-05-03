@@ -2,8 +2,10 @@ cdjot
 *.o
 fuzz/cdjot-fuzz
 fuzz/cdjot-fuzz-afl
+fuzz/cdjot-cov
 fuzz/cdjot.dict.lf
 fuzz/corpus/
+fuzz/cov/
 fuzz/corpus-afl/
 fuzz/crashes/
 fuzz/findings/

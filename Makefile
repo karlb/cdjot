@@ -8,6 +8,12 @@ FUZZ_CC ?= clang
 FUZZ_CFLAGS = -std=c99 -g -O1 -DCDJOT_NO_MAIN
 FUZZ_SAN = -fsanitize=address,undefined -fno-sanitize-recover=undefined
 
+# Coverage tools fall back to the versioned binaries (Debian ships
+# only `llvm-profdata-19` / `llvm-cov-19` on PATH; the unversioned
+# names live in /usr/lib/llvm-19/bin which is not on PATH by default).
+LLVM_PROFDATA ?= $(shell command -v llvm-profdata 2>/dev/null || command -v llvm-profdata-19 2>/dev/null || echo llvm-profdata)
+LLVM_COV ?= $(shell command -v llvm-cov 2>/dev/null || command -v llvm-cov-19 2>/dev/null || echo llvm-cov)
+
 cdjot: cdjot.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cdjot.c
 
@@ -34,6 +40,7 @@ bench: cdjot
 # `make fuzz-replay`  replay fuzz/corpus through fuzz/cdjot-fuzz to catch crashes
 # `make fuzz-baseline` snapshot current proptest BAD filenames into findings/
 # `make fuzz-check`   run proptests; report which BAD files are new vs baseline
+# `make fuzz-cov`     LLVM source-based coverage of fuzz/corpus on cdjot.c
 # `make fuzz-clean`   remove fuzz build artifacts (keeps corpus dir)
 
 fuzz: fuzz/cdjot-fuzz
@@ -137,10 +144,34 @@ fuzz-sync: fuzz/cdjot-fuzz
 fuzz-replay: fuzz/cdjot-fuzz fuzz-corpus
 	./fuzz/cdjot-fuzz -timeout=5 -runs=0 fuzz/corpus
 
+# Coverage analysis (one-shot). Build cdjot with LLVM source-based
+# coverage, replay the libFuzzer corpus through it, and emit per-line
+# branch counts so structurally-uncovered constructs can be seeded
+# manually (corpus inputs or fuzz/cdjot.dict entries) instead of
+# waiting on compute. Counter $$i (not %p) names each profraw because
+# PIDs can recycle inside a tight shell loop and clobber files.
+fuzz-cov: cdjot.c cdjot.h fuzz-corpus
+	$(FUZZ_CC) -std=c99 -O1 -g -fprofile-instr-generate -fcoverage-mapping \
+		-o fuzz/cdjot-cov cdjot.c
+	rm -rf fuzz/cov && mkdir fuzz/cov
+	@i=0; for f in fuzz/corpus/*; do \
+		i=$$((i+1)); \
+		LLVM_PROFILE_FILE=fuzz/cov/$$i.profraw \
+			./fuzz/cdjot-cov < "$$f" > /dev/null; \
+	done
+	$(LLVM_PROFDATA) merge -sparse fuzz/cov/*.profraw -o fuzz/cov/cdjot.profdata
+	@echo "--- summary ---"
+	$(LLVM_COV) report ./fuzz/cdjot-cov -instr-profile=fuzz/cov/cdjot.profdata
+	$(LLVM_COV) show ./fuzz/cdjot-cov -instr-profile=fuzz/cov/cdjot.profdata \
+		-show-branches=count -show-line-counts-or-regions cdjot.c \
+		> fuzz/cov/coverage.txt
+	@echo "per-line:        fuzz/cov/coverage.txt"
+	@echo "uncovered lines: awk '/^ *0\\|/' fuzz/cov/coverage.txt"
+
 fuzz-clean:
-	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot.dict.lf
-	rm -rf fuzz/crashes fuzz/corpus-afl fuzz/afl-out
+	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot.dict.lf fuzz/cdjot-cov
+	rm -rf fuzz/crashes fuzz/corpus-afl fuzz/afl-out fuzz/cov
 
 .PHONY: clean test install bench fuzz fuzz-afl fuzz-corpus \
 	fuzz-run fuzz-afl-run fuzz-sync fuzz-baseline fuzz-check \
-	fuzz-replay fuzz-clean
+	fuzz-replay fuzz-cov fuzz-clean
