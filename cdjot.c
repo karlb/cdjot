@@ -2732,7 +2732,7 @@ dolink(const char *b, const char *e, int n)
 			r++;
 		}
 		if (!has_link_form) {
-			if (no_link_form_e != e || !no_link_form_p || p < no_link_form_p) {
+			if (no_link_form_e != e || p < no_link_form_p) {
 				no_link_form_e = e;
 				no_link_form_p = p;
 			}
