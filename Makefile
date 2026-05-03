@@ -30,6 +30,7 @@ bench: cdjot
 # `make fuzz-corpus`  extract seed inputs from test/*.test into fuzz/corpus/
 # `make fuzz-run`     fuzz/cdjot-fuzz with corpus + dictionary
 # `make fuzz-afl-run` minimize corpus into fuzz/corpus-afl/ then run afl-fuzz
+# `make fuzz-sync`    fold AFL queue findings into fuzz/corpus/ and re-merge
 # `make fuzz-replay`  replay fuzz/corpus through fuzz/cdjot-fuzz to catch crashes
 # `make fuzz-baseline` snapshot current proptest BAD filenames into findings/
 # `make fuzz-check`   run proptests; report which BAD files are new vs baseline
@@ -113,6 +114,22 @@ fuzz-check: cdjot fuzz-corpus
 		fi; \
 	done
 
+# Fold AFL's queue findings into libFuzzer's corpus so both fuzzers benefit
+# from each other's coverage. Rotates corpus → corpus.bak before swapping
+# in the merged set so a bad merge is recoverable.
+fuzz-sync: fuzz/cdjot-fuzz
+	@test -d fuzz/afl-out/default/queue || { echo "no AFL queue at fuzz/afl-out/default/queue"; exit 1; }
+	@before=$$(ls fuzz/corpus | wc -l); \
+	 find fuzz/afl-out/default/queue -name 'id:*' -exec cp -n {} fuzz/corpus/ \; ; \
+	 added=$$(($$(ls fuzz/corpus | wc -l) - $$before)); \
+	 echo "copied $$added AFL inputs into fuzz/corpus/"
+	rm -rf fuzz/corpus.min && mkdir fuzz/corpus.min
+	./fuzz/cdjot-fuzz -merge=1 fuzz/corpus.min fuzz/corpus
+	rm -rf fuzz/corpus.bak
+	mv fuzz/corpus fuzz/corpus.bak
+	mv fuzz/corpus.min fuzz/corpus
+	@echo "corpus: $$(ls fuzz/corpus | wc -l) files (was $$(ls fuzz/corpus.bak | wc -l))"
+
 # Replay every corpus input through the libFuzzer harness (-runs=0 means
 # no mutation; libFuzzer just feeds each file through LLVMFuzzerTestOneInput
 # under ASan/UBSan). -timeout=5 caps each input at 5s wall-clock; libFuzzer
@@ -125,5 +142,5 @@ fuzz-clean:
 	rm -rf fuzz/crashes fuzz/corpus-afl fuzz/afl-out
 
 .PHONY: clean test install bench fuzz fuzz-afl fuzz-corpus \
-	fuzz-run fuzz-afl-run fuzz-baseline fuzz-check \
+	fuzz-run fuzz-afl-run fuzz-sync fuzz-baseline fuzz-check \
 	fuzz-replay fuzz-clean

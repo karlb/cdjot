@@ -75,6 +75,13 @@ handles this:
 Both invocations set `AFL_SKIP_CPUFREQ=1` (skip the governor warning)
 and `-m none` (ASan needs no memory cap).
 
+After a meaningful AFL session, run `make fuzz-sync` to fold AFL's queue
+findings (`afl-out/default/queue/id:*`) into `corpus/` and re-merge with
+`-merge=1` so libFuzzer keeps only inputs that add new edges. The
+previous corpus is rotated to `corpus.bak` in case the merge goes
+sideways. This is the only place the two fuzzers share coverage —
+without it, AFL's discoveries never reach libFuzzer's runs.
+
 ## Tuning levers
 
 If libFuzzer plateaus and you want to push further:
