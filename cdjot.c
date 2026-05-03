@@ -2652,11 +2652,15 @@ emit_url(const char *b, const char *e)
 			b++;
 			if (*b == '&') oputs("&amp;");
 			else if (*b == '"') oputs("&quot;");
+			else if (*b == '<') oputs("&lt;");
+			else if (*b == '>') oputs("&gt;");
 			else oputc(*b);
 			continue;
 		}
 		if (*b == '&') oputs("&amp;");
 		else if (*b == '"') oputs("&quot;");
+		else if (*b == '<') oputs("&lt;");
+		else if (*b == '>') oputs("&gt;");
 		else oputc(*b);
 	}
 }
