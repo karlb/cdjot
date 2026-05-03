@@ -10,6 +10,7 @@ fuzz/corpus.bak/
 fuzz/corpus.min/
 fuzz/crashes/
 fuzz/findings/
+findings/baseline-*.txt
 fuzz/afl-in/
 fuzz/afl-out/
 crash-*

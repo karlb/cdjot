@@ -29,23 +29,23 @@ describes the typical workflow.
 
 ```sh
 make fuzz-corpus      # one-shot: ~770 seeds (test/* + real-world djot)
+make fuzz-baseline    # snapshot proptest BAD filenames into findings/
 make fuzz-run         # libFuzzer; runs forever, Ctrl-C to stop
                       # grows corpus/ as it discovers new edges
 make fuzz-replay      # ASan + UBSan + 5s timeout over the whole corpus
+make fuzz-check       # diff proptest BAD set vs baseline; reports new failures
 make fuzz-merge       # optional: drop coverage-redundant inputs from corpus/
                       # (keeps a corpus.bak in case you regret it)
 ```
 
-After fuzzing, run the property checks on the grown corpus:
+`make fuzz-check` is the post-fuzz triage command: it runs all three
+proptest scripts (`wellformed.js`, `attrsafe.js`, `idunique.js`) over
+the full corpus and prints any inputs that fail now but didn't in the
+baseline (and any that were failing but no longer do). See
+`../proptest/README.md` for what each check enforces.
 
-```sh
-node ../proptest/wellformed.js corpus/*.dj
-node ../proptest/attrsafe.js   corpus/*.dj
-node ../proptest/idunique.js   corpus/*.dj
-```
-
-(See `../proptest/README.md` for what each check enforces and the
-expected baselines.)
+To re-snapshot the baseline (e.g., after fixing a bug or accepting a
+new noise pattern as permanent), re-run `make fuzz-baseline`.
 
 ## Triaging a crash
 

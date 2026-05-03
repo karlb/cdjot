@@ -33,6 +33,8 @@ bench: cdjot
 # `make fuzz-afl-run` minimize corpus into fuzz/corpus-afl/ then run afl-fuzz
 # `make fuzz-replay`  replay fuzz/corpus through fuzz/cdjot-asan to catch crashes
 # `make fuzz-merge`   minimize fuzz/corpus/ in place; keeps fuzz/corpus.bak
+# `make fuzz-baseline` snapshot current proptest BAD filenames into findings/
+# `make fuzz-check`   run proptests; report which BAD files are new vs baseline
 # `make fuzz-clean`   remove fuzz build artifacts (keeps corpus dir)
 
 fuzz: fuzz/cdjot-fuzz
@@ -92,8 +94,46 @@ fuzz-merge: fuzz/cdjot-fuzz
 	mv fuzz/corpus.min fuzz/corpus
 	@echo "merged: $$(ls fuzz/corpus | wc -l) kept (was $$(ls fuzz/corpus.bak | wc -l)). Old corpus preserved at fuzz/corpus.bak"
 
+# Snapshot the current set of proptest BAD filenames as the baseline.
+# Run this once on a known-good state (e.g., after fixing a bug or
+# accepting that a noise pattern is permanent). The baseline files
+# live in findings/baseline-*.txt and are gitignored — each developer
+# keeps their own per-corpus snapshot.
+fuzz-baseline: cdjot fuzz-corpus
+	@mkdir -p findings
+	@for s in wellformed attrsafe idunique; do \
+		SHOW=999999 node proptest/$$s.js fuzz/corpus/* 2>/dev/null | \
+			awk '/^=== BAD/ {print $$3}' | sort -u > findings/baseline-$$s.txt; \
+		printf '%-12s baseline: %d failure(s) → findings/baseline-%s.txt\n' \
+			"$$s" "$$(wc -l < findings/baseline-$$s.txt)" "$$s"; \
+	done
+
+# Run all proptests against the corpus and report inputs that fail now
+# but didn't in the baseline (and ones that were failing but no longer
+# do). Requires a prior `make fuzz-baseline`.
+fuzz-check: cdjot fuzz-corpus
+	@for s in wellformed attrsafe idunique; do \
+		baseline=findings/baseline-$$s.txt; \
+		if [ ! -f $$baseline ]; then \
+			echo "$$s: no baseline at $$baseline; run 'make fuzz-baseline' first"; \
+			continue; \
+		fi; \
+		cur=$$(mktemp); \
+		SHOW=999999 node proptest/$$s.js fuzz/corpus/* 2>/dev/null | \
+			awk '/^=== BAD/ {print $$3}' | sort -u > $$cur; \
+		new=$$(grep -vxFf $$baseline $$cur 2>/dev/null || true); \
+		gone=$$(grep -vxFf $$cur $$baseline 2>/dev/null || true); \
+		rm -f $$cur; \
+		if [ -z "$$new" ] && [ -z "$$gone" ]; then \
+			echo "$$s: matches baseline"; \
+		else \
+			[ -n "$$new" ]  && { echo "$$s: NEW failures since baseline:"; echo "$$new"  | sed 's/^/  + /'; }; \
+			[ -n "$$gone" ] && { echo "$$s: gone (now passing):";          echo "$$gone" | sed 's/^/  - /'; }; \
+		fi; \
+	done
+
 fuzz-replay: fuzz/cdjot-asan fuzz-corpus
-	@n=0; for f in fuzz/corpus/*.dj; do \
+	@n=0; for f in fuzz/corpus/*; do \
 		timeout 5s ./fuzz/cdjot-asan "$$f" >/dev/null 2>&1 || \
 			{ rc=$$?; printf 'SLOW/FAIL rc=%d %s\n' "$$rc" "$$f"; n=$$((n+1)); }; \
 	done; \
@@ -104,4 +144,5 @@ fuzz-clean:
 	rm -rf fuzz/crashes fuzz/corpus-afl fuzz/afl-out
 
 .PHONY: clean test install bench fuzz fuzz-afl fuzz-asan fuzz-corpus \
-	fuzz-run fuzz-afl-run fuzz-merge fuzz-replay fuzz-clean
+	fuzz-run fuzz-afl-run fuzz-merge fuzz-baseline fuzz-check \
+	fuzz-replay fuzz-clean
