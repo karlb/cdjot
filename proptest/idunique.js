@@ -12,8 +12,9 @@
 //   CDJOT=path    override binary (default ./cdjot)
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
-const cdjot = process.env.CDJOT || './cdjot';
+const cdjot = process.env.CDJOT || path.join(__dirname, '..', 'cdjot');
 const showLimit = parseInt(process.env.SHOW || '5', 10);
 
 function check(html) {

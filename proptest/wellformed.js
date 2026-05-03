@@ -10,8 +10,9 @@
 // that cdjot only emits as raw HTML through {=html} are excluded.
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
-const cdjot = process.env.CDJOT || './cdjot';
+const cdjot = process.env.CDJOT || path.join(__dirname, '..', 'cdjot');
 const showLimit = parseInt(process.env.SHOW || '5', 10);
 
 const PAIRED = new Set([

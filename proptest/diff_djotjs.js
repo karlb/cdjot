@@ -7,12 +7,13 @@
 // Setup: npm install @djot/djot   (run from this directory)
 // Usage: node diff_djotjs.js <file>...
 //   SHOW=N   show first N divergences (default 5)
-//   CDJOT=path   override binary (default ../cdjot)
+//   CDJOT=path   override binary (default ../cdjot relative to this script)
 const { parse, renderHTML } = require('@djot/djot');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
-const cdjot = process.env.CDJOT || '../cdjot';
+const cdjot = process.env.CDJOT || path.join(__dirname, '..', 'cdjot');
 const showLimit = parseInt(process.env.SHOW || '5', 10);
 
 let diffs = 0, errs = 0, ok = 0;
