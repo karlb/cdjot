@@ -3,7 +3,11 @@ cdjot
 fuzz/cdjot-fuzz
 fuzz/cdjot-fuzz-afl
 fuzz/cdjot-asan
+fuzz/cdjot.dict.lf
 fuzz/corpus/
+fuzz/corpus-afl/
+fuzz/corpus.bak/
+fuzz/corpus.min/
 fuzz/crashes/
 fuzz/findings/
 fuzz/afl-in/

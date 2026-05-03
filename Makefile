@@ -24,12 +24,15 @@ bench: cdjot
 	sh bench.sh
 
 # --- Fuzzing -----------------------------------------------------------------
+# See fuzz/README.md for the workflow narrative; this block is the target index.
 # `make fuzz`         build libFuzzer harness (requires clang + compiler-rt fuzzer)
 # `make fuzz-afl`     build AFL++ persistent-mode harness (requires afl-clang-fast)
 # `make fuzz-asan`    build standalone batch driver (ASan/UBSan, no fuzzer rt needed)
 # `make fuzz-corpus`  extract seed inputs from test/*.test into fuzz/corpus/
 # `make fuzz-run`     fuzz/cdjot-fuzz with corpus + dictionary
+# `make fuzz-afl-run` minimize corpus into fuzz/corpus-afl/ then run afl-fuzz
 # `make fuzz-replay`  replay fuzz/corpus through fuzz/cdjot-asan to catch crashes
+# `make fuzz-merge`   minimize fuzz/corpus/ in place; keeps fuzz/corpus.bak
 # `make fuzz-clean`   remove fuzz build artifacts (keeps corpus dir)
 
 fuzz: fuzz/cdjot-fuzz
@@ -64,6 +67,31 @@ fuzz-run: fuzz/cdjot-fuzz fuzz-corpus fuzz/cdjot.dict.lf
 fuzz/cdjot.dict.lf: fuzz/cdjot.dict
 	sed 's/\\n/\\x0a/g; s/\\r/\\x0d/g; s/\\t/\\x09/g' $< > $@
 
+# AFL++ chokes on the libFuzzer-grown fuzz/corpus/ (huge + many redundant
+# coverage duplicates), so minimize into a separate dir and run from there.
+# AFL_SKIP_CPUFREQ=1 skips the CPU governor warning that otherwise wants
+# root to set the scaling_governor to performance. -m none disables AFL's
+# memory limit (incompatible with ASan).
+fuzz-afl-run: fuzz/cdjot-fuzz-afl fuzz-corpus
+	rm -rf fuzz/corpus-afl
+	AFL_SKIP_CPUFREQ=1 afl-cmin -T all -i fuzz/corpus -o fuzz/corpus-afl -m none -- ./fuzz/cdjot-fuzz-afl
+	AFL_SKIP_CPUFREQ=1 afl-fuzz -i fuzz/corpus-afl -o fuzz/afl-out -m none -- ./fuzz/cdjot-fuzz-afl
+
+# Drop coverage-redundant inputs from fuzz/corpus/ using libFuzzer's own
+# minimizer. The previous corpus is preserved as fuzz/corpus.bak so a
+# regretted merge can be rolled back. Refuses to clobber an existing .bak.
+fuzz-merge: fuzz/cdjot-fuzz
+	@if [ -e fuzz/corpus.bak ]; then \
+		echo "fuzz/corpus.bak already exists; remove it first to confirm overwrite"; \
+		exit 1; \
+	fi
+	rm -rf fuzz/corpus.min
+	mkdir -p fuzz/corpus.min
+	./fuzz/cdjot-fuzz -merge=1 fuzz/corpus.min fuzz/corpus
+	mv fuzz/corpus fuzz/corpus.bak
+	mv fuzz/corpus.min fuzz/corpus
+	@echo "merged: $$(ls fuzz/corpus | wc -l) kept (was $$(ls fuzz/corpus.bak | wc -l)). Old corpus preserved at fuzz/corpus.bak"
+
 fuzz-replay: fuzz/cdjot-asan fuzz-corpus
 	@n=0; for f in fuzz/corpus/*.dj; do \
 		timeout 5s ./fuzz/cdjot-asan "$$f" >/dev/null 2>&1 || \
@@ -73,7 +101,7 @@ fuzz-replay: fuzz/cdjot-asan fuzz-corpus
 
 fuzz-clean:
 	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot-asan fuzz/cdjot.dict.lf
-	rm -rf fuzz/crashes
+	rm -rf fuzz/crashes fuzz/corpus-afl fuzz/afl-out
 
 .PHONY: clean test install bench fuzz fuzz-afl fuzz-asan fuzz-corpus \
-	fuzz-run fuzz-replay fuzz-clean
+	fuzz-run fuzz-afl-run fuzz-merge fuzz-replay fuzz-clean
