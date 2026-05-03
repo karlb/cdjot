@@ -9,3 +9,5 @@ fuzz/findings/
 fuzz/afl-in/
 fuzz/afl-out/
 crash-*
+proptest/node_modules/
+proptest/package*.json
