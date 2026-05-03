@@ -684,6 +684,36 @@ short-circuit cache makes this linear; output is unchanged.
 [</sup>y</p>
 ```
 
+Regression: a long run of `{` with no closing `}` used to make
+doparagraph's brace pre-process re-scan to e on every `{` — O(N^2).
+The no_close_after cache makes this linear; output is unchanged.
+
+```
+{{{{{{{{{{
+.
+<p>{{{{{{{{{{</p>
+```
+
+Regression: many `{X` (X non-alpha, no closing `}`) used to make
+doreplace re-scan to the next `\n` on every `{` — O(N^2). The
+nc_b/nc_eol cache makes this linear; output is unchanged.
+
+```
+{1 {1 {1 {1 {1 {1 {1
+.
+<p>{1 {1 {1 {1 {1 {1 {1</p>
+```
+
+Regression: a long whitespace run with no following `\` used to make
+doreplace's hard-break check forward-walk on every space — O(N^2).
+The b[-1]-is-ws skip makes this linear; output is unchanged.
+
+```
+a                                                  b
+.
+<p>a                                                  b</p>
+```
+
 Regression: a footnote whose content has many blank lines used to make
 emit_endnotes re-scan via skip_blanks per blank line — O(N^2). Output
 shape is unchanged.

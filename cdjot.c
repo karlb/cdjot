@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,8 +109,10 @@ static const char *nc_eol;
  * at recursion); the array memory is owned by the current call. */
 static const char *bm_base;
 static const char *bm_end;
-static int *bm_match;
-static int bm_cap;
+static long *bm_match;
+static long bm_cap;
+static long *bm_stack;
+static long bm_stack_cap;
 
 /* Single growable output buffer. All emit goes here, then a single fwrite at
  * the end of cdjot_convert. Avoids stdio per-call overhead and chunked write
@@ -221,28 +224,30 @@ pcat(char **buf, int *cap, const char *s)
 static void
 build_bracket_match(const char *b, const char *e)
 {
-	int n, i, top, *stack;
+	long n, i, top;
 	if (bm_base == b && bm_end == e) return;
 	n = e - b;
 	if (n + 1 > bm_cap) {
 		bm_cap = n + 64;
-		bm_match = realloc(bm_match, bm_cap * sizeof(int));
+		bm_match = realloc(bm_match, bm_cap * sizeof(*bm_match));
 		if (!bm_match) die("malloc");
 	}
-	stack = malloc(sizeof(int) * (n + 1));
-	if (!stack) die("malloc");
+	if (n + 1 > bm_stack_cap) {
+		bm_stack_cap = n + 64;
+		bm_stack = realloc(bm_stack, bm_stack_cap * sizeof(*bm_stack));
+		if (!bm_stack) die("malloc");
+	}
 	top = 0;
 	for (i = 0; i < n; i++) bm_match[i] = -1;
 	for (i = 0; i < n; i++) {
 		if (b[i] == '\\' && i + 1 < n) { i++; continue; }
 		if (b[i] == '[') {
-			stack[top++] = i;
+			bm_stack[top++] = i;
 		} else if (b[i] == ']' && top > 0) {
-			int j = stack[--top];
+			long j = bm_stack[--top];
 			bm_match[j] = i;
 		}
 	}
-	free(stack);
 	bm_base = b;
 	bm_end = e;
 }
@@ -2498,9 +2503,19 @@ dosurround(const char *b, const char *e, int n)
 		}
 		/* skip [text](url) only if url contains our delimiter */
 		if (*p == '[') {
-			/* Quick check: any `](` ahead? If not, no link form to
-			 * skip — avoid the O(N) depth walk on inputs with many
-			 * unmatched `[` (e.g. `[^foo` repeated). */
+			/* No matching `]` at all → cannot form a link, skip the
+			 * scans below. Without this, `*[[[[...` (no `]`) is
+			 * O(N^2) inside dosurround. */
+			{
+				ptrdiff_t idx;
+				build_bracket_match(proc_base, e);
+				idx = p - proc_base;
+				if (idx >= 0 && idx < bm_end - bm_base
+				    && bm_match[idx] < 0)
+					continue;
+			}
+			/* Quick check: any `](` ahead? If not, this `[` cannot
+			 * start a link form — skip the depth walk below. */
 			int has_paren_close = 0;
 			{
 				const char *r = p + 1;
@@ -2770,8 +2785,8 @@ dolink(const char *b, const char *e, int n)
 	 * O(N) depth walk per `[`, total O(N^2). */
 	build_bracket_match(proc_base, e);
 	{
-		int idx = p - proc_base;
-		int mi;
+		ptrdiff_t idx = p - proc_base;
+		long mi;
 		if (idx < 0 || idx >= bm_end - bm_base) return 0;
 		mi = bm_match[idx];
 		if (mi < 0) return 0;
@@ -3117,8 +3132,8 @@ process(const char *b, const char *e, int newblock)
 	const char *save_nc_eol = nc_eol;
 	const char *save_bm_base = bm_base;
 	const char *save_bm_end = bm_end;
-	int *save_bm_match = bm_match;
-	int save_bm_cap = bm_cap;
+	long *save_bm_match = bm_match;
+	long save_bm_cap = bm_cap;
 	int affected;
 	int allow_block = newblock;
 
@@ -3609,6 +3624,8 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	bm_end = NULL;
 	bm_match = NULL;
 	bm_cap = 0;
+	bm_stack = NULL;
+	bm_stack_cap = 0;
 
 	cap_pid = cap_pcls = cap_pattr = 16;
 	pending_id = malloc(cap_pid);
@@ -3645,10 +3662,12 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	free(pending_id);
 	free(pending_class);
 	free(pending_attrs);
+	free(bm_stack);
 
 	refs = NULL; footnotes = NULL; id_ht = NULL;
 	urlbuf = NULL;
 	pending_id = pending_class = pending_attrs = NULL;
+	bm_stack = NULL; bm_stack_cap = 0;
 
 	return 0;
 }
