@@ -54,8 +54,15 @@ fuzz/cdjot-asan: fuzz/fuzz_cdjot.c cdjot.c cdjot.h
 fuzz-corpus:
 	sh fuzz/extract_seeds.sh
 
-fuzz-run: fuzz/cdjot-fuzz fuzz-corpus
-	cd fuzz && ./cdjot-fuzz -dict=cdjot.dict -max_len=8192 corpus/
+fuzz-run: fuzz/cdjot-fuzz fuzz-corpus fuzz/cdjot.dict.lf
+	cd fuzz && ./cdjot-fuzz -dict=cdjot.dict.lf -max_len=8192 corpus/
+
+# libFuzzer's dict parser only honours \\, \", and \xHH escapes (not
+# \n/\t/\r), so convert the natural-escape source dict into a libFuzzer-
+# compatible one at build time. Keeps cdjot.dict editable as plain C
+# strings.
+fuzz/cdjot.dict.lf: fuzz/cdjot.dict
+	sed 's/\\n/\\x0a/g; s/\\r/\\x0d/g; s/\\t/\\x09/g' $< > $@
 
 fuzz-replay: fuzz/cdjot-asan fuzz-corpus
 	@n=0; for f in fuzz/corpus/*.dj; do \
@@ -65,7 +72,7 @@ fuzz-replay: fuzz/cdjot-asan fuzz-corpus
 	echo "fuzz-replay: $$n input(s) timed out or failed"
 
 fuzz-clean:
-	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot-asan
+	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot-asan fuzz/cdjot.dict.lf
 	rm -rf fuzz/crashes
 
 .PHONY: clean test install bench fuzz fuzz-afl fuzz-asan fuzz-corpus \
