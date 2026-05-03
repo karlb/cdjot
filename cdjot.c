@@ -1729,8 +1729,6 @@ dolist(const char *b, const char *e, int n)
 		if (has_pending()) {
 			emit_attrs(pending_id, pending_class, pending_attrs);
 			clear_pending();
-		} else if (is_task) {
-			oputs(" class=\"task-list\"");
 		}
 		oputs(">\n");
 	} else {
