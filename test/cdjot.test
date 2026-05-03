@@ -637,3 +637,73 @@ braces are consumed silently and no attrs are applied.
 .
 <p><a href="url">link</a></p>
 ```
+
+Regression: a run of `^` or `_` with no possible closer used to be
+O(N^3) — each call to dosurround re-scanned the whole run via an
+all-delim walk. Locks the literal-emit fall-through.
+
+```
+^^^^^^^^^^
+.
+<p>^^^^^^^^^^</p>
+```
+
+```
+__________
+.
+<p>__________</p>
+```
+
+```
+___xyz
+.
+<p>___xyz</p>
+```
+
+Regression: consecutive indented `[label]:` lines used to make prescan
+re-walk continuations on each iteration (O(N^2)) and merged sibling
+refdefs into one URL. Each line should register its own ref.
+
+```
+  [a]: http://aa
+  [b]: http://bb
+[link][b]
+.
+<p><a href="http://bb">link</a></p>
+```
+
+Regression: a paragraph full of `[^foo` (unmatched footnote refs) used
+to make dolink and dosurround walk to e on every `[`, O(N^2). The
+short-circuit cache makes this linear; output is unchanged.
+
+```
+[^x
+[^y
+.
+<p>[<sup>x
+[</sup>y</p>
+```
+
+Regression: a footnote whose content has many blank lines used to make
+emit_endnotes re-scan via skip_blanks per blank line — O(N^2). Output
+shape is unchanged.
+
+```
+[^a]
+
+[^a]: line1
+
+
+  line2
+.
+<p><a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></p>
+<section role="doc-endnotes">
+<hr>
+<ol>
+<li id="fn1">
+<p>line1</p>
+<p>line2<a href="#fnref1" role="doc-backlink">↩︎</a></p>
+</li>
+</ol>
+</section>
+```
