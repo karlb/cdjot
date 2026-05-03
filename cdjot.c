@@ -93,6 +93,14 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
+/* Cache: smallest p with no `](X` (X in "([{") in [p, e). When dolink or
+ * dosurround scans for a link form and fails, they record (e, p) here so
+ * subsequent calls in the same range can short-circuit. Invalid when e
+ * doesn't match — a process() recursion with a different e clobbers it,
+ * but that's rare relative to inline-loop hot paths. */
+static const char *no_link_form_e;
+static const char *no_link_form_p;
+
 /* Single growable output buffer. All emit goes here, then a single fwrite at
  * the end of cdjot_convert. Avoids stdio per-call overhead and chunked write
  * syscalls. */
@@ -2354,8 +2362,9 @@ dosurround(const char *b, const char *e, int n)
 	if (!explicit_open && isws(after)) return 0;
 
 	/* handle runs: N identical delimiters matched by N closers */
+	int run = 0;
 	if (!explicit_open) {
-		int run = leadc(b, e, ch);
+		run = leadc(b, e, ch);
 		if (run > 1) {
 			const char *rp = b + run;
 			while (rp + run <= e) {
@@ -2390,6 +2399,15 @@ dosurround(const char *b, const char *e, int n)
 				rp += crun;
 			}
 		}
+		/* No `ch` after the run: no closer possible. Emit run as
+		 * literal and skip past it; otherwise process() would call
+		 * dosurround on each char in the run, scanning to e each
+		 * time — O(N^2) for long delim runs. */
+		if (b + run >= e || !memchr(b + run, ch, (size_t)(e - b - run))) {
+			int j;
+			for (j = 0; j < run; j++) oputc(ch);
+			return run;
+		}
 	}
 
 	/* find matching close (single delimiter)
@@ -2398,7 +2416,9 @@ dosurround(const char *b, const char *e, int n)
 	start = b + 1 + consumed_open;
 	{
 	int inner_openers = 0;
+	int seen_nondelim = 0;
 	for (p = start; p < e; p++) {
+		if (*p != ch) seen_nondelim = 1;
 		if (*p == '\\' && p + 1 < e) { p++; continue; }
 		/* skip explicit openers {_ and closers _} that aren't ours */
 		if (*p == '{' && p + 1 < e && p[1] == ch) {
@@ -2431,6 +2451,23 @@ dosurround(const char *b, const char *e, int n)
 		}
 		/* skip [text](url) only if url contains our delimiter */
 		if (*p == '[') {
+			/* Quick check: any `](` ahead? If not, no link form to
+			 * skip — avoid the O(N) depth walk on inputs with many
+			 * unmatched `[` (e.g. `[^foo` repeated). Reuses dolink's
+			 * cache (no_link_form covers `](`/`][`/`]{`, a superset). */
+			if (no_link_form_e == e && p >= no_link_form_p)
+				continue;
+			int has_paren_close = 0;
+			{
+				const char *r = p + 1;
+				while ((r = memchr(r, ']', e - r))) {
+					if (r + 1 < e && r[1] == '(') {
+						has_paren_close = 1; break;
+					}
+					r++;
+				}
+			}
+			if (!has_paren_close) continue;
 			/* find ] and check for (url) */
 			int depth = 1;
 			const char *q = p + 1;
@@ -2498,13 +2535,7 @@ dosurround(const char *b, const char *e, int n)
 			}
 			if (is_closer) {
 				/* reject if content is all delimiter chars */
-				if (!explicit_open) {
-					const char *t;
-					int alldelim = 1;
-					for (t = start; t < p; t++)
-						if (*t != ch) { alldelim = 0; break; }
-					if (alldelim) continue;
-				}
+				if (!explicit_open && !seen_nondelim) continue;
 				stop = p;
 				{
 					const char *otag, *ctag;
@@ -2531,6 +2562,16 @@ dosurround(const char *b, const char *e, int n)
 				inner_openers++;
 		}
 	}
+	}
+	/* Single-delim scan failed. For run >= 3 the inner_openers logic
+	 * is the same regardless of where in the run we start, so no inner
+	 * position can succeed either. Emit run as literal to avoid
+	 * O(N^2) repeated scans by process(). (For run<=2 inner positions
+	 * may still succeed, so we leave those to the next dosurround.) */
+	if (run >= 3) {
+		int j;
+		for (j = 0; j < run; j++) oputc(ch);
+		return run;
 	}
 	return 0;
 }
@@ -2673,6 +2714,29 @@ dolink(const char *b, const char *e, int n)
 				    num, num, num);
 				return fe + 1 - b;
 			}
+		}
+	}
+
+	/* Quick check: does any `](`, `][`, or `]{` exist ahead? Without one,
+	 * no link/ref/span form can match. Skips the O(N) depth walk on inputs
+	 * with many unmatched `[` (e.g. `[^foo` repeated) — see fuzz/. */
+	if (no_link_form_e == e && p >= no_link_form_p)
+		return 0;
+	{
+		const char *r = p + 1;
+		int has_link_form = 0;
+		while ((r = memchr(r, ']', e - r))) {
+			if (r + 1 < e && (r[1] == '(' || r[1] == '[' || r[1] == '{')) {
+				has_link_form = 1; break;
+			}
+			r++;
+		}
+		if (!has_link_form) {
+			if (no_link_form_e != e || !no_link_form_p || p < no_link_form_p) {
+				no_link_form_e = e;
+				no_link_form_p = p;
+			}
+			return 0;
 		}
 	}
 
@@ -3007,10 +3071,14 @@ process(const char *b, const char *e, int newblock)
 {
 	const char *p;
 	const char *save_base = proc_base;
+	const char *save_no_form_e = no_link_form_e;
+	const char *save_no_form_p = no_link_form_p;
 	int affected;
 	int allow_block = newblock;
 
 	proc_base = b;
+	no_link_form_e = NULL;
+	no_link_form_p = NULL;
 	for (p = b; p < e; ) {
 		if (newblock) {
 			int had_blank = 0;
@@ -3019,7 +3087,11 @@ process(const char *b, const char *e, int newblock)
 				if (!isblankline(p, le)) break;
 				had_blank = 1;
 				p = le;
-				if (p >= e) return;
+				if (p >= e) {
+					no_link_form_e = save_no_form_e;
+					no_link_form_p = save_no_form_p;
+					return;
+				}
 			}
 			if (had_blank && has_pending())
 				clear_pending();
@@ -3117,6 +3189,8 @@ process(const char *b, const char *e, int newblock)
 			newblock = affected < 0;
 	}
 	proc_base = save_base;
+	no_link_form_e = save_no_form_e;
+	no_link_form_p = save_no_form_p;
 }
 
 static char *urlbuf;
@@ -3272,7 +3346,7 @@ prescan(const char *b, const char *e)
 						}
 						nrefs++;
 					}
-					line = eol(line, e);
+					line = nextline;
 					continue;
 				}
 			}
@@ -3460,6 +3534,8 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	proc_base = NULL;
 	id_ht = NULL; id_ht_sz = 0; id_ht_cnt = 0;
 	urlbuf = NULL; urlbuflen = 0; cap_url = 0;
+	no_link_form_e = NULL;
+	no_link_form_p = NULL;
 
 	cap_pid = cap_pcls = cap_pattr = 16;
 	pending_id = malloc(cap_pid);
