@@ -3458,14 +3458,15 @@ emit_endnotes(void)
 							const char *after = skip_blanks(le, fc + fcl);
 							if (after < fc + fcl)
 								lastpara = after;
+							sp = after;
 						} else {
 							const char *tp = sp;
 							while (tp < le && *tp == ' ') tp++;
 							if (tp < le && (*tp == '`' || *tp == '~')
 							    && leadc(tp, le, *tp) >= 3)
 								has_blocks = 1;
+							sp = le;
 						}
-						sp = le;
 					}
 				}
 				if (has_blocks) {
