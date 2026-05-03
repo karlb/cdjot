@@ -565,13 +565,10 @@ end of the input buffer. Renders as an empty div.
 </div>
 ```
 
-A multi-line heading whose lazy continuation produces a blank line in
-the heading's inline content must not trigger block parsers on that
-content. The two `# x` lines below collapse via lazy continuation into
-the parent `# h` heading; the empty `#` line in the middle yields a
-blank line inside the heading's inline buffer, which previously
-promoted the inline-only process() call to block mode and emitted a
-`<p>` tag inside the unclosed `<h1>`.
+A bare `#` continuation line is a heading marker with no inline
+content and contributes nothing to the heading's content (matching
+djot.js). The `# h` and `# x` lines join with a single newline; the
+empty `#` line in between is dropped.
 
 ```
 # h
@@ -580,7 +577,6 @@ promoted the inline-only process() call to block mode and emitted a
 .
 <section id="h-x">
 <h1>h
-
 x</h1>
 </section>
 ```

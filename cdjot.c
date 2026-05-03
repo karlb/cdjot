@@ -1231,8 +1231,6 @@ doheading(const char *b, const char *e, int n)
 		if (hl >= 1 && hl <= 6 && hl != level && lp + hl < e
 		    && (lp[hl] == ' ' || lp[hl] == '\n'))
 			break; /* different heading level */
-		if (blen > 0)
-			PUSH(buf, blen, '\n');
 		if (hl == level && lp + hl < e && (lp[hl] == ' ' || lp[hl] == '\n')) {
 			/* same level: strip prefix */
 			lp += hl;
@@ -1241,7 +1239,10 @@ doheading(const char *b, const char *e, int n)
 			lp = line;
 		}
 		q = trim_end(lp, eol(line, e));
-		PUSHRANGE(buf, blen, lp, q - lp);
+		if (q > lp) {
+			if (blen > 0) PUSH(buf, blen, '\n');
+			PUSHRANGE(buf, blen, lp, q - lp);
+		}
 		line = eol(line, e);
 	}
 	while (blen > 0 && isws(buf[blen-1]))
