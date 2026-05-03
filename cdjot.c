@@ -544,6 +544,7 @@ scan_inline_attrs(const char *p, const char *e,
 	}
 	if (ae >= e || *ae != '}') return p;
 	parse_attrs(ab, ae, sid, scls, sextra);
+	if (!*sid) return p; /* invalid syntax: leave {...} as literal */
 	return ae + 1;
 }
 
@@ -2714,11 +2715,13 @@ dolink(const char *b, const char *e, int n)
 				const char *ae = ab;
 				while (ae < e && *ae != '}') ae++;
 				if (ae < e && *ae == '}') {
-					char *sid, *scls, *sextra;
+					char *sid = NULL, *scls = NULL, *sextra = NULL;
 					parse_attrs(ab, ae, &sid, &scls, &sextra);
-					emit_attrs(sid, scls, sextra);
-					free(sid); free(scls); free(sextra);
-					q = ae; /* advance past } */
+					if (sid) {
+						emit_attrs(sid, scls, sextra);
+						free(sid); free(scls); free(sextra);
+						q = ae; /* advance past } */
+					}
 				}
 			}
 			oputs(">");
@@ -2742,7 +2745,7 @@ dolink(const char *b, const char *e, int n)
 				}
 				if (ae < e && *ae == '}') {
 					parse_attrs(ab, ae, &sid, &scls, &sextra);
-					q = ae;
+					if (sid) q = ae;
 				}
 			}
 			oputs("<a href=\"");
@@ -2779,7 +2782,7 @@ dolink(const char *b, const char *e, int n)
 					while (ae < e && *ae != '}' && *ae != '\n') ae++;
 					if (ae < e && *ae == '}') {
 						parse_attrs(ab, ae, NULL, NULL, &inline_attr);
-						q = ae; /* consume the {attrs} */
+						if (inline_attr) q = ae; /* consume the {attrs} */
 					}
 				}
 				rattr = (inline_attr && inline_attr[0]) ? inline_attr : refs[ri-1].attrs;
@@ -2822,8 +2825,16 @@ dolink(const char *b, const char *e, int n)
 		const char *ae = ab;
 		while (ae < e && *ae != '}') ae++;
 		if (ae < e && *ae == '}') {
-			char *sid, *scls, *sextra;
+			char *sid = NULL, *scls = NULL, *sextra = NULL;
 			parse_attrs(ab, ae, &sid, &scls, &sextra);
+			if (!sid) {
+				/* invalid attrs: emit span, leave {...} as
+				 * literal trailing content (matches djot.js) */
+				oputs("<span>");
+				process(text, textend, 0);
+				oputs("</span>");
+				return q - b;
+			}
 			oputs("<span");
 			emit_attrs(sid, scls, sextra);
 			oputc('>');

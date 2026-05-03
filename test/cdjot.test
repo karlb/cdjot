@@ -607,3 +607,37 @@ foo
 <p>{#a&lt;b}
 foo</p>
 ```
+
+Inline attribute syntax with invalid chars renders the braces as
+literal trailing text rather than silently consuming them. Span
+syntax `[text]{...}` still emits the span (matching djot.js), with
+the malformed `{...}` left as literal trailing content; trailing
+attrs on links, images, autolinks, and reference links are not
+consumed.
+
+```
+[text]{.x"y}
+.
+<p><span>text</span>{.x”y}</p>
+```
+
+```
+[link](url){.x"y}
+.
+<p><a href="url">link</a>{.x”y}</p>
+```
+
+Empty `{}` after a span or link is valid (matching djot.js): the
+braces are consumed silently and no attrs are applied.
+
+```
+[text]{}
+.
+<p><span>text</span></p>
+```
+
+```
+[link](url){}
+.
+<p><a href="url">link</a></p>
+```
