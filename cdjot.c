@@ -388,7 +388,6 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 	const char *p = b;
 	int idn = 0, cn = 0, en = 0;
 	int len = e - b;
-	int valid = 1;
 	/* id/class need at most input length; extra needs more for &quot; expansion */
 	char *id = malloc(len + 1);
 	char *cls = malloc(len + 1);
@@ -397,7 +396,7 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 	if (!id || !cls || !extra) die("malloc");
 	id[0] = cls[0] = extra[0] = '\0';
 
-	while (p < e && valid) {
+	while (p < e) {
 		while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
 		if (p >= e) break;
 		if (*p == '#') {
@@ -405,7 +404,7 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			p++;
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
 			    && *p != '}') {
-				if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+				if (!IS_NAME_CHAR(*p)) goto fail;
 				id[idn++] = *p;
 				p++;
 			}
@@ -416,7 +415,7 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			if (cn > 0) cls[cn++] = ' ';
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
 			    && *p != '}') {
-				if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+				if (!IS_NAME_CHAR(*p)) goto fail;
 				cls[cn++] = *p;
 				p++;
 			}
@@ -430,11 +429,10 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			/* key=val */
 			if (en > 0) extra[en++] = ' ';
 			while (p < e && *p != '=' && *p != ' ' && *p != '}') {
-				if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+				if (!IS_NAME_CHAR(*p)) goto fail;
 				extra[en++] = *p;
 				p++;
 			}
-			if (!valid) break;
 			if (p < e && *p == '=') {
 				extra[en++] = '=';
 				p++;
@@ -463,10 +461,10 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 					}
 					if (p < e) { extra[en++] = '"'; p++; }
 				} else {
-					/* unquoted value: same restricted char set */
+					/* unquoted values are restricted; quoted ones aren't */
 					extra[en++] = '"';
 					while (p < e && *p != ' ' && *p != '}') {
-						if (!IS_NAME_CHAR(*p)) { valid = 0; break; }
+						if (!IS_NAME_CHAR(*p)) goto fail;
 						extra[en++] = *p;
 						p++;
 					}
@@ -475,21 +473,19 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			}
 			extra[en] = '\0';
 		} else {
-			valid = 0;
-			break;
+			goto fail;
 		}
-	}
-	if (!valid) {
-		free(id); free(cls); free(extra);
-		if (idp) *idp = NULL;
-		if (clsp) *clsp = NULL;
-		if (extrap) *extrap = NULL;
-		return 0;
 	}
 	if (idp) *idp = id; else free(id);
 	if (clsp) *clsp = cls; else free(cls);
 	if (extrap) *extrap = extra; else free(extra);
 	return idn > 0 || cn > 0 || en > 0;
+fail:
+	free(id); free(cls); free(extra);
+	if (idp) *idp = NULL;
+	if (clsp) *clsp = NULL;
+	if (extrap) *extrap = NULL;
+	return 0;
 }
 
 static void
