@@ -6,6 +6,10 @@
  * (ASan/UBSan) catch crashes, OOB reads/writes, UAF, and undefined behavior
  * that the unit tests don't exercise. Output is discarded via a /dev/null
  * stream opened once at startup.
+ *
+ * To replay a corpus under sanitizers without mutation, use libFuzzer's
+ * own batch mode: `./fuzz/cdjot-fuzz -runs=0 fuzz/corpus` (see
+ * `make fuzz-replay`).
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -45,33 +49,6 @@ main(void)
 	while (__AFL_LOOP(10000)) {
 		size_t len = __AFL_FUZZ_TESTCASE_LEN;
 		cdjot_convert(devnull, (const char *)buf, len);
-	}
-	return 0;
-}
-
-#elif defined(FUZZ_STANDALONE)
-/* Standalone batch driver: feed each file in argv through cdjot_convert.
- * Lets you replay a corpus under ASan/UBSan without libFuzzer's runtime. */
-#include <string.h>
-
-int
-main(int argc, char *argv[])
-{
-	int i;
-	init_devnull();
-	for (i = 1; i < argc; i++) {
-		FILE *f = fopen(argv[i], "rb");
-		if (!f) { perror(argv[i]); continue; }
-		fseek(f, 0, SEEK_END);
-		long n = ftell(f);
-		fseek(f, 0, SEEK_SET);
-		if (n < 0) { fclose(f); continue; }
-		char *buf = (char *)malloc((size_t)n + 1);
-		if (!buf) { fclose(f); return 1; }
-		size_t r = fread(buf, 1, (size_t)n, f);
-		fclose(f);
-		cdjot_convert(devnull, buf, r);
-		free(buf);
 	}
 	return 0;
 }

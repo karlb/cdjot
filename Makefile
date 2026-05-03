@@ -27,12 +27,10 @@ bench: cdjot
 # See fuzz/README.md for the workflow narrative; this block is the target index.
 # `make fuzz`         build libFuzzer harness (requires clang + compiler-rt fuzzer)
 # `make fuzz-afl`     build AFL++ persistent-mode harness (requires afl-clang-fast)
-# `make fuzz-asan`    build standalone batch driver (ASan/UBSan, no fuzzer rt needed)
 # `make fuzz-corpus`  extract seed inputs from test/*.test into fuzz/corpus/
 # `make fuzz-run`     fuzz/cdjot-fuzz with corpus + dictionary
 # `make fuzz-afl-run` minimize corpus into fuzz/corpus-afl/ then run afl-fuzz
-# `make fuzz-replay`  replay fuzz/corpus through fuzz/cdjot-asan to catch crashes
-# `make fuzz-merge`   minimize fuzz/corpus/ in place; keeps fuzz/corpus.bak
+# `make fuzz-replay`  replay fuzz/corpus through fuzz/cdjot-fuzz to catch crashes
 # `make fuzz-baseline` snapshot current proptest BAD filenames into findings/
 # `make fuzz-check`   run proptests; report which BAD files are new vs baseline
 # `make fuzz-clean`   remove fuzz build artifacts (keeps corpus dir)
@@ -50,12 +48,6 @@ fuzz/cdjot-fuzz-afl: fuzz/fuzz_cdjot.c cdjot.c cdjot.h
 	afl-clang-fast $(FUZZ_CFLAGS) $(FUZZ_SAN) \
 		-o $@ fuzz/fuzz_cdjot.c cdjot.c
 
-fuzz-asan: fuzz/cdjot-asan
-
-fuzz/cdjot-asan: fuzz/fuzz_cdjot.c cdjot.c cdjot.h
-	$(FUZZ_CC) $(FUZZ_CFLAGS) -DFUZZ_STANDALONE $(FUZZ_SAN) \
-		-o $@ fuzz/fuzz_cdjot.c cdjot.c
-
 fuzz-corpus:
 	sh fuzz/extract_seeds.sh
 
@@ -71,28 +63,17 @@ fuzz/cdjot.dict.lf: fuzz/cdjot.dict
 
 # AFL++ chokes on the libFuzzer-grown fuzz/corpus/ (huge + many redundant
 # coverage duplicates), so minimize into a separate dir and run from there.
+# afl-cmin uses fuzz/corpus-afl/.traces/ as a working dir and leaves it
+# behind on completion; clean it explicitly so the dir holds only the
+# minimized inputs that afl-fuzz consumes.
 # AFL_SKIP_CPUFREQ=1 skips the CPU governor warning that otherwise wants
 # root to set the scaling_governor to performance. -m none disables AFL's
 # memory limit (incompatible with ASan).
 fuzz-afl-run: fuzz/cdjot-fuzz-afl fuzz-corpus
 	rm -rf fuzz/corpus-afl
 	AFL_SKIP_CPUFREQ=1 afl-cmin -T all -i fuzz/corpus -o fuzz/corpus-afl -m none -- ./fuzz/cdjot-fuzz-afl
+	rm -rf fuzz/corpus-afl/.traces
 	AFL_SKIP_CPUFREQ=1 afl-fuzz -i fuzz/corpus-afl -o fuzz/afl-out -m none -- ./fuzz/cdjot-fuzz-afl
-
-# Drop coverage-redundant inputs from fuzz/corpus/ using libFuzzer's own
-# minimizer. The previous corpus is preserved as fuzz/corpus.bak so a
-# regretted merge can be rolled back. Refuses to clobber an existing .bak.
-fuzz-merge: fuzz/cdjot-fuzz
-	@if [ -e fuzz/corpus.bak ]; then \
-		echo "fuzz/corpus.bak already exists; remove it first to confirm overwrite"; \
-		exit 1; \
-	fi
-	rm -rf fuzz/corpus.min
-	mkdir -p fuzz/corpus.min
-	./fuzz/cdjot-fuzz -merge=1 fuzz/corpus.min fuzz/corpus
-	mv fuzz/corpus fuzz/corpus.bak
-	mv fuzz/corpus.min fuzz/corpus
-	@echo "merged: $$(ls fuzz/corpus | wc -l) kept (was $$(ls fuzz/corpus.bak | wc -l)). Old corpus preserved at fuzz/corpus.bak"
 
 # Snapshot the current set of proptest BAD filenames as the baseline.
 # Run this once on a known-good state (e.g., after fixing a bug or
@@ -132,17 +113,17 @@ fuzz-check: cdjot fuzz-corpus
 		fi; \
 	done
 
-fuzz-replay: fuzz/cdjot-asan fuzz-corpus
-	@n=0; for f in fuzz/corpus/*; do \
-		timeout 5s ./fuzz/cdjot-asan "$$f" >/dev/null 2>&1 || \
-			{ rc=$$?; printf 'SLOW/FAIL rc=%d %s\n' "$$rc" "$$f"; n=$$((n+1)); }; \
-	done; \
-	echo "fuzz-replay: $$n input(s) timed out or failed"
+# Replay every corpus input through the libFuzzer harness (-runs=0 means
+# no mutation; libFuzzer just feeds each file through LLVMFuzzerTestOneInput
+# under ASan/UBSan). -timeout=5 caps each input at 5s wall-clock; libFuzzer
+# aborts on the first timeout/crash and prints the offending input path.
+fuzz-replay: fuzz/cdjot-fuzz fuzz-corpus
+	./fuzz/cdjot-fuzz -timeout=5 -runs=0 fuzz/corpus
 
 fuzz-clean:
-	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot-asan fuzz/cdjot.dict.lf
+	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot.dict.lf
 	rm -rf fuzz/crashes fuzz/corpus-afl fuzz/afl-out
 
-.PHONY: clean test install bench fuzz fuzz-afl fuzz-asan fuzz-corpus \
-	fuzz-run fuzz-afl-run fuzz-merge fuzz-baseline fuzz-check \
+.PHONY: clean test install bench fuzz fuzz-afl fuzz-corpus \
+	fuzz-run fuzz-afl-run fuzz-baseline fuzz-check \
 	fuzz-replay fuzz-clean

@@ -1,21 +1,20 @@
 # Fuzzing
 
-cdjot has a libFuzzer + AFL++ + standalone-ASan setup. All targets live
-in the top-level `Makefile` (search for `--- Fuzzing ---`). This file
-describes the typical workflow.
+cdjot has a libFuzzer + AFL++ setup. All targets live in the top-level
+`Makefile` (search for `--- Fuzzing ---`). This file describes the
+typical workflow.
 
 ## Components
 
 | file | role |
 |---|---|
-| `fuzz_cdjot.c` | one source file, three entry points (libFuzzer / AFL persistent / standalone batch driver) selected by `-D` flags |
+| `fuzz_cdjot.c` | one source file, two entry points (libFuzzer / AFL persistent) selected automatically by the AFL macros |
 | `cdjot.dict` | hand-curated libFuzzer/AFL dictionary in natural C-string form (`\n`, `\t`, …) |
 | `cdjot.dict.lf` | build artifact — `cdjot.dict` with escapes converted to libFuzzer's `\xHH` form |
 | `extract_seeds.sh` | populates `corpus/` from `test/*.test` and (if present) `~/code/experiments/djot-corpus/` |
 | `corpus/` | seed inputs + libFuzzer's coverage-guided additions |
 | `corpus-afl/` | minimized seed set for AFL (cmin output) |
 | `afl-out/` | AFL fuzz output |
-| `corpus.bak/` | previous corpus preserved by `make fuzz-merge` |
 | `crash-*` | inputs libFuzzer flagged as ASan/UBSan crashes |
 | `slow-unit-*` | inputs libFuzzer flagged as slow (>20s by default) |
 
@@ -32,11 +31,15 @@ make fuzz-corpus      # one-shot: ~770 seeds (test/* + real-world djot)
 make fuzz-baseline    # snapshot proptest BAD filenames into findings/
 make fuzz-run         # libFuzzer; runs forever, Ctrl-C to stop
                       # grows corpus/ as it discovers new edges
-make fuzz-replay      # ASan + UBSan + 5s timeout over the whole corpus
+make fuzz-replay      # libFuzzer -runs=0 over corpus/ under ASan + UBSan
+                      # with a 5s per-input cap; aborts on first failure
 make fuzz-check       # diff proptest BAD set vs baseline; reports new failures
-make fuzz-merge       # optional: drop coverage-redundant inputs from corpus/
-                      # (keeps a corpus.bak in case you regret it)
 ```
+
+If `corpus/` ever grows large enough to slow startup, dedupe by edge
+with `./fuzz/cdjot-fuzz -merge=1 corpus.min corpus && rm -rf corpus &&
+mv corpus.min corpus`. libFuzzer's coverage-guided growth makes this
+rarely necessary.
 
 `make fuzz-check` is the post-fuzz triage command: it runs all three
 proptest scripts (`wellformed.js`, `attrsafe.js`, `idunique.js`) over
@@ -51,7 +54,7 @@ new noise pattern as permanent), re-run `make fuzz-baseline`.
 
 ```sh
 ls fuzz/crash-* fuzz/slow-unit-*       # any findings?
-./fuzz/cdjot-asan fuzz/crash-<sha1>    # see the sanitizer trace
+./fuzz/cdjot-fuzz fuzz/crash-<sha1>    # see the sanitizer trace
 
 # minimize for a small reproducer:
 ./fuzz/cdjot-fuzz -minimize_crash=1 -runs=100000 fuzz/crash-<sha1>
@@ -82,6 +85,6 @@ If libFuzzer plateaus and you want to push further:
   fuzzer struggles to assemble from individual tokens (deep nested
   divs/lists, complete tables, etc.)
 - `-jobs=N -workers=N` to parallelise libFuzzer across cores
-- `make fuzz-merge` then re-run, so libFuzzer starts from a leaner
-  base
+- Manually merge with `./fuzz/cdjot-fuzz -merge=1 corpus.min corpus`
+  (then swap dirs) so libFuzzer starts from a leaner base
 - Try AFL++ as a complementary mutator
