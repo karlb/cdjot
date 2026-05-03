@@ -93,13 +93,23 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
-/* Cache: smallest p with no `](X` (X in "([{") in [p, e). When dolink or
- * dosurround scans for a link form and fails, they record (e, p) here so
- * subsequent calls in the same range can short-circuit. Invalid when e
- * doesn't match — a process() recursion with a different e clobbers it,
- * but that's rare relative to inline-loop hot paths. */
-static const char *no_link_form_e;
-static const char *no_link_form_p;
+/* Cache for doreplace's `{X` scan: a contiguous range [nc_b, nc_eol)
+ * in which no `}` exists before the next `\n` or e. Without this, inputs
+ * like `{{{{{...` are O(N^2) — every `{` scans to the next `\n`. */
+static const char *nc_e;
+static const char *nc_b;
+static const char *nc_eol;
+
+/* Bracket-match table built once per process() call. bm_match[i] is the
+ * offset (relative to bm_base) of the `]` matching `[` at bm_base+i with
+ * depth-0 escape-aware matching, or -1 if no such match exists. Replaces
+ * dolink's per-call O(N) depth walk; without this, inputs like
+ * `[[[[...[](` are O(N^2). The state is per-process-call (saved/restored
+ * at recursion); the array memory is owned by the current call. */
+static const char *bm_base;
+static const char *bm_end;
+static int *bm_match;
+static int bm_cap;
 
 /* Single growable output buffer. All emit goes here, then a single fwrite at
  * the end of cdjot_convert. Avoids stdio per-call overhead and chunked write
@@ -206,6 +216,35 @@ pcat(char **buf, int *cap, const char *s)
 	pensure(buf, cap, cur + sep + slen + 1);
 	if (sep) (*buf)[cur++] = ' ';
 	memcpy(*buf + cur, s, slen + 1);
+}
+
+static void
+build_bracket_match(const char *b, const char *e)
+{
+	int n, i, top, *stack;
+	if (bm_base == b && bm_end == e) return;
+	n = e - b;
+	if (n + 1 > bm_cap) {
+		bm_cap = n + 64;
+		bm_match = realloc(bm_match, bm_cap * sizeof(int));
+		if (!bm_match) die("malloc");
+	}
+	stack = malloc(sizeof(int) * (n + 1));
+	if (!stack) die("malloc");
+	top = 0;
+	for (i = 0; i < n; i++) bm_match[i] = -1;
+	for (i = 0; i < n; i++) {
+		if (b[i] == '\\' && i + 1 < n) { i++; continue; }
+		if (b[i] == '[') {
+			stack[top++] = i;
+		} else if (b[i] == ']' && top > 0) {
+			int j = stack[--top];
+			bm_match[j] = i;
+		}
+	}
+	free(stack);
+	bm_base = b;
+	bm_end = e;
 }
 
 static void
@@ -1997,6 +2036,11 @@ doparagraph(const char *b, const char *e, int n)
 		int nlen = 0;
 		const char *s = b;
 		int transformed = 0;
+		/* Once a `{` scan has confirmed there is no `}` from some position
+		 * onward, every later `{` would also fail. Skip the O(N) inner
+		 * scan in that case; without this, inputs like `{{{{{{...` are
+		 * O(N^2). See fuzz/afl-out hangs. */
+		const char *no_close_after = p;
 
 		if (!nbuf) die("malloc");
 		while (s < p) {
@@ -2023,6 +2067,7 @@ doparagraph(const char *b, const char *e, int n)
 				continue;
 			}
 			if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
+				if (s >= no_close_after) goto copy_char;
 				/* skip {attrs} after inline closers — parsers handle them */
 				if (s > b && (s[-1] == '`' || s[-1] == '>'
 				    || s[-1] == '*' || s[-1] == '_'
@@ -2147,6 +2192,8 @@ doparagraph(const char *b, const char *e, int n)
 						transformed = 1;
 						continue;
 					}
+					/* no closing `}` in [s+1, p): cache so later `{`s skip */
+					no_close_after = s;
 				}
 			}
 		copy_char:
@@ -2453,10 +2500,7 @@ dosurround(const char *b, const char *e, int n)
 		if (*p == '[') {
 			/* Quick check: any `](` ahead? If not, no link form to
 			 * skip — avoid the O(N) depth walk on inputs with many
-			 * unmatched `[` (e.g. `[^foo` repeated). Reuses dolink's
-			 * cache (no_link_form covers `](`/`][`/`]{`, a superset). */
-			if (no_link_form_e == e && p >= no_link_form_p)
-				continue;
+			 * unmatched `[` (e.g. `[^foo` repeated). */
 			int has_paren_close = 0;
 			{
 				const char *r = p + 1;
@@ -2721,37 +2765,19 @@ dolink(const char *b, const char *e, int n)
 		}
 	}
 
-	/* Quick check: does any `](`, `][`, or `]{` exist ahead? Without one,
-	 * no link/ref/span form can match. Skips the O(N) depth walk on inputs
-	 * with many unmatched `[` (e.g. `[^foo` repeated) — see fuzz/. */
-	if (no_link_form_e == e && p >= no_link_form_p)
-		return 0;
+	/* Find matching `]` via the precomputed bracket-match table. Without
+	 * this, inputs with many unmatched `[` (e.g. `[[[[...[](`) cause an
+	 * O(N) depth walk per `[`, total O(N^2). */
+	build_bracket_match(proc_base, e);
 	{
-		const char *r = p + 1;
-		int has_link_form = 0;
-		while ((r = memchr(r, ']', e - r))) {
-			if (r + 1 < e && (r[1] == '(' || r[1] == '[' || r[1] == '{')) {
-				has_link_form = 1; break;
-			}
-			r++;
-		}
-		if (!has_link_form) {
-			if (no_link_form_e != e || p < no_link_form_p) {
-				no_link_form_e = e;
-				no_link_form_p = p;
-			}
-			return 0;
-		}
+		int idx = p - proc_base;
+		int mi;
+		if (idx < 0 || idx >= bm_end - bm_base) return 0;
+		mi = bm_match[idx];
+		if (mi < 0) return 0;
+		q = proc_base + mi;
 	}
-
-	depth = 1;
 	text = p + 1;
-	for (q = text; q < e; q++) {
-		if (*q == '\\' && q + 1 < e) { q++; continue; }
-		if (*q == '[') depth++;
-		if (*q == ']' && --depth == 0) break;
-	}
-	if (q >= e) return 0;
 	textend = q;
 	q++; /* past ] */
 
@@ -2971,11 +2997,18 @@ doreplace(const char *b, const char *e, int n)
 	    && b[1] != '\'' && b[1] != '"'
 	    && b[1] != '#' && b[1] != '.' && b[1] != '%'
 	    && !isalpha((unsigned char)b[1])) {
-		const char *q = b + 1;
-		while (q < e && *q != '}' && *q != '\n') q++;
-		if (q < e && *q == '}') {
-			hprint(b, q + 1);
-			return q + 1 - b;
+		if (!(nc_e == e && b >= nc_b && b < nc_eol)) {
+			const char *q = b + 1;
+			while (q < e && *q != '}' && *q != '\n') q++;
+			if (q < e && *q == '}') {
+				hprint(b, q + 1);
+				return q + 1 - b;
+			}
+			/* scan stopped at `\n` or e without finding `}`: cache
+			 * the run so later `{`s on this line short-circuit. */
+			nc_e = e;
+			nc_b = b;
+			nc_eol = q;
 		}
 	}
 
@@ -3048,8 +3081,12 @@ doreplace(const char *b, const char *e, int n)
 		return 1;
 	}
 
-	/* spaces before hard break: consume "ws \ ws newline" as <br> */
-	if ((*b == ' ' || *b == '\t') && !n) {
+	/* spaces before hard break: consume "ws \ ws newline" as <br>.
+	 * Mid-run spaces skip the forward scan: the previous iteration
+	 * (one space earlier in the same run) already concluded — without
+	 * this, a long run of spaces is O(N^2). */
+	if ((*b == ' ' || *b == '\t') && !n
+	    && !(b > proc_base && (b[-1] == ' ' || b[-1] == '\t'))) {
 		const char *q = b;
 		while (q < e && (*q == ' ' || *q == '\t')) q++;
 		if (q < e && *q == '\\') {
@@ -3075,14 +3112,24 @@ process(const char *b, const char *e, int newblock)
 {
 	const char *p;
 	const char *save_base = proc_base;
-	const char *save_no_form_e = no_link_form_e;
-	const char *save_no_form_p = no_link_form_p;
+	const char *save_nc_e = nc_e;
+	const char *save_nc_b = nc_b;
+	const char *save_nc_eol = nc_eol;
+	const char *save_bm_base = bm_base;
+	const char *save_bm_end = bm_end;
+	int *save_bm_match = bm_match;
+	int save_bm_cap = bm_cap;
 	int affected;
 	int allow_block = newblock;
 
 	proc_base = b;
-	no_link_form_e = NULL;
-	no_link_form_p = NULL;
+	nc_e = NULL;
+	nc_b = NULL;
+	nc_eol = NULL;
+	bm_base = NULL;
+	bm_end = NULL;
+	bm_match = NULL;
+	bm_cap = 0;
 	for (p = b; p < e; ) {
 		if (newblock) {
 			int had_blank = 0;
@@ -3092,8 +3139,14 @@ process(const char *b, const char *e, int newblock)
 				had_blank = 1;
 				p = le;
 				if (p >= e) {
-					no_link_form_e = save_no_form_e;
-					no_link_form_p = save_no_form_p;
+					nc_e = save_nc_e;
+					nc_b = save_nc_b;
+					nc_eol = save_nc_eol;
+					free(bm_match);
+					bm_base = save_bm_base;
+					bm_end = save_bm_end;
+					bm_match = save_bm_match;
+					bm_cap = save_bm_cap;
 					return;
 				}
 			}
@@ -3193,8 +3246,14 @@ process(const char *b, const char *e, int newblock)
 			newblock = affected < 0;
 	}
 	proc_base = save_base;
-	no_link_form_e = save_no_form_e;
-	no_link_form_p = save_no_form_p;
+	nc_e = save_nc_e;
+	nc_b = save_nc_b;
+	nc_eol = save_nc_eol;
+	free(bm_match);
+	bm_base = save_bm_base;
+	bm_end = save_bm_end;
+	bm_match = save_bm_match;
+	bm_cap = save_bm_cap;
 }
 
 static char *urlbuf;
@@ -3543,8 +3602,13 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	proc_base = NULL;
 	id_ht = NULL; id_ht_sz = 0; id_ht_cnt = 0;
 	urlbuf = NULL; urlbuflen = 0; cap_url = 0;
-	no_link_form_e = NULL;
-	no_link_form_p = NULL;
+	nc_e = NULL;
+	nc_b = NULL;
+	nc_eol = NULL;
+	bm_base = NULL;
+	bm_end = NULL;
+	bm_match = NULL;
+	bm_cap = 0;
 
 	cap_pid = cap_pcls = cap_pattr = 16;
 	pending_id = malloc(cap_pid);
