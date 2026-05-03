@@ -12,9 +12,10 @@ itself can't see.
 |---|---|---|
 | `wellformed.js` | every paired HTML tag (`<p>`, `<section>`, `<a>`, …) is closed in LIFO order | node |
 | `attrsafe.js` | no attribute value contains a literal `<` | node |
+| `idunique.js` | every `id="X"` is unique and every `href="#X"` resolves to an `id="X"` | node |
 | `diff_djotjs.js` | output equals `@djot/djot` reference output | node + `npm install @djot/djot` |
 
-All three scripts are informational — they print failures and an
+All scripts are informational — they print failures and an
 `OK=… BAD=… ERRS=…` summary, then exit 0. Some baseline noise is
 expected (e.g., `wellformed.js` flags inputs that deliberately emit
 unbalanced tags via `{=html}` raw HTML, and `diff_djotjs.js` flags
@@ -28,6 +29,7 @@ count after a code change*, not a clean run.
 make fuzz-corpus            # populate fuzz/corpus/ with seeds
 node proptest/wellformed.js fuzz/corpus/*
 node proptest/attrsafe.js   fuzz/corpus/*
+node proptest/idunique.js   fuzz/corpus/*
 
 # diff against reference (one-time setup):
 cd proptest && npm init -y && npm install @djot/djot && cd ..

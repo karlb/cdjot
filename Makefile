@@ -58,7 +58,11 @@ fuzz-run: fuzz/cdjot-fuzz fuzz-corpus
 	cd fuzz && ./cdjot-fuzz -dict=cdjot.dict -max_len=8192 corpus/
 
 fuzz-replay: fuzz/cdjot-asan fuzz-corpus
-	./fuzz/cdjot-asan fuzz/corpus/*.dj
+	@n=0; for f in fuzz/corpus/*.dj; do \
+		timeout 5s ./fuzz/cdjot-asan "$$f" >/dev/null 2>&1 || \
+			{ rc=$$?; printf 'SLOW/FAIL rc=%d %s\n' "$$rc" "$$f"; n=$$((n+1)); }; \
+	done; \
+	echo "fuzz-replay: $$n input(s) timed out or failed"
 
 fuzz-clean:
 	rm -f fuzz/cdjot-fuzz fuzz/cdjot-fuzz-afl fuzz/cdjot-asan

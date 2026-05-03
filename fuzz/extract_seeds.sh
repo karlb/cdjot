@@ -37,5 +37,17 @@ for f in "$here"/../test/*.test; do
 	' "$f"
 done
 
-count=$(find "$out" -name 'seed_*.dj' | wc -l | tr -d ' ')
+# Optionally pull in real-world djot files. Set CDJOT_CORPUS to a directory
+# (defaults to $HOME/code/experiments/djot-corpus); skipped silently if absent.
+extra="${CDJOT_CORPUS:-$HOME/code/experiments/djot-corpus}"
+if [ -d "$extra" ]; then
+	rm -f "$out"/wild_*.dj
+	idx=0
+	find "$extra" \( -name '*.dj' -o -name '*.djot' \) -type f | while IFS= read -r src; do
+		idx=$((idx + 1))
+		cp "$src" "$(printf '%s/wild_%05d.dj' "$out" "$idx")"
+	done
+fi
+
+count=$(find "$out" -name '*.dj' | wc -l | tr -d ' ')
 echo "Extracted $count seed inputs to $out"
