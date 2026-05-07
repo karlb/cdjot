@@ -490,7 +490,7 @@ then [^a]
 <a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a>
 </li>
 </ul>
-<p>then <a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></p>
+<p>then <a href="#fn1" role="doc-noteref"><sup>1</sup></a></p>
 <section role="doc-endnotes">
 <hr>
 <ol>

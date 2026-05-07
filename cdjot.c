@@ -2767,12 +2767,17 @@ dolink(const char *b, const char *e, int n)
 				nfootnotes++;
 			}
 			if (found >= 0) {
+				int first = !footnotes[found].num;
 				footnotes[found].used = 1;
-				if (!footnotes[found].num)
+				if (first)
 					footnotes[found].num = ++footnote_counter;
 				int num = footnotes[found].num;
-				oprintf("<a id=\"fnref%d\" href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
-				    num, num, num);
+				if (first)
+					oprintf("<a id=\"fnref%d\" href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
+					    num, num, num);
+				else
+					oprintf("<a href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
+					    num, num);
 				return fe + 1 - b;
 			}
 		}
