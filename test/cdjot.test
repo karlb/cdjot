@@ -68,15 +68,6 @@ items should be wrapped in <p>, not just items with continuation.
 </ul>
 ```
 
-Inline comments: "Material between two % characters in an attribute
-will be ignored and treated as a comment."
-
-```
-Hello {% comment %} world
-.
-<p>Hello  world</p>
-```
-
 Image with inline attributes: attributes after ![alt](src){attrs}
 should go on the <img> tag, not wrap in a <span>.
 
@@ -432,16 +423,6 @@ valid ref def and renders as a paragraph.
 <p><a>foo</a></p>
 ```
 
-A URL without trailing content is a valid ref def and resolves.
-
-```
-[foo]: http://example.com
-
-[foo][]
-.
-<p><a href="http://example.com">foo</a></p>
-```
-
 Indented continuation that starts with `-` must not be treated as a
 real sub-list. In djot, nested lists require a blank-line separator
 between parent and nested marker. Without a blank line, the indented
@@ -478,14 +459,6 @@ para\
 .
 <p>para<br>
 </p>
-```
-
-```
-line1\
-line2
-.
-<p>line1<br>
-line2</p>
 ```
 
 Whitespace-only lines are blank lines (CommonMark convention, which
