@@ -98,6 +98,17 @@ Inline attributes on links: {key=val}, {.class}, {#id} after
 <p><a href="b" class="cls" id="id">a</a></p>
 ```
 
+Attributes are emitted in declaration order, and a repeated name keeps
+its original position while taking the later value. Only classes
+accumulate; a second id replaces the first rather than joining it.
+
+```
+{#i1 .c key=a #i2}
+para
+.
+<p id="i2" class="c" key="a">para</p>
+```
+
 Inline attributes on strong should attach to the element,
 not wrap in a <span>.
 
@@ -323,6 +334,19 @@ valid ref def and renders as a paragraph.
 <p><a>foo</a></p>
 ```
 
+An attribute block ahead of a reference definition applies to links
+that use it — all of it, id and class included, not just key=value
+pairs.
+
+```
+{#i .c key=v}
+[foo]: http://x
+
+[foo][]
+.
+<p><a href="http://x" id="i" class="c" key="v">foo</a></p>
+```
+
 Indented continuation that starts with `-` must not be treated as a
 real sub-list. In djot, nested lists require a blank-line separator
 between parent and nested marker. Without a blank line, the indented
@@ -475,6 +499,17 @@ foo
 .
 <p>{#a&lt;b}
 foo</p>
+```
+
+Quoted values are not restricted that way, so they are the one place
+`<` and `&` can reach an attribute value. They must be HTML-escaped on
+output so they can't break out of the attribute.
+
+```
+{k1="a<b" k2="c&d"}
+para
+.
+<p k1="a&lt;b" k2="c&amp;d">para</p>
 ```
 
 Inline attribute syntax with invalid chars renders the braces as
