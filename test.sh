@@ -4,8 +4,8 @@
 #
 # Tests are from jgm/djot.js. Omitted/modified tests:
 # - symb.test: uses AST output format, not HTML (djot symbols have no standard HTML mapping)
-# - attributes.test #35 (2 blocks): uses AST output format for multi-line attribute edge cases
-# - attributes.test #18: expected output adjusted — attrs are correct but emitted in
+# - attributes.test (2 trailing blocks): use AST output format for multi-line attribute edge cases
+# - attributes.test #22: expected output adjusted — attrs are correct but emitted in
 #   id/class/extra order rather than declaration order across multiple {..} blocks.
 #   HTML attribute order has no semantic effect.
 # - filters.test, sourcepos.test: not applicable to a simple stdin-to-stdout converter

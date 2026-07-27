@@ -540,6 +540,23 @@ fail:
 	return 0;
 }
 
+/* Attribute content (between the braces) that is nothing but a `%..%`
+ * comment. parse_attrs reports these as failures since they yield no
+ * attrs, so callers that must consume them check here instead. */
+static int
+attrs_comment_only(const char *b, const char *e)
+{
+	const char *p = b;
+	while (p < e && (*p == ' ' || *p == '\t' || *p == '\n')) p++;
+	if (p >= e || *p != '%') return 0;
+	p++;
+	while (p < e && *p != '%') p++;
+	if (p >= e) return 0;
+	p++;
+	while (p < e && (*p == ' ' || *p == '\t' || *p == '\n')) p++;
+	return p >= e;
+}
+
 static void
 oputs_attr(const char *s)
 {
@@ -1158,23 +1175,9 @@ doattr(const char *b, const char *e, int n)
 	}
 	{
 		char *tid, *tcls, *textra;
-		/* check if entire content is a comment */
-		{
-			const char *cc = p + 1;
-			while (cc < q && (*cc == ' ' || *cc == '\t' || *cc == '\n')) cc++;
-			if (cc < q && *cc == '%') {
-				cc++;
-				while (cc < q && *cc != '%') cc++;
-				if (cc < q && *cc == '%') {
-					cc++;
-					while (cc < q && (*cc == ' ' || *cc == '\t' || *cc == '\n')) cc++;
-					if (cc >= q) {
-						/* pure comment block — consume the line(s) */
-						return -(eol(q, e) - b);
-					}
-				}
-			}
-		}
+		/* pure comment block — consume the line(s) */
+		if (attrs_comment_only(p + 1, q))
+			return -(eol(q, e) - b);
 		if (!parse_attrs(p + 1, q, &tid, &tcls, &textra)) {
 			free(tid); free(tcls); free(textra);
 			return 0;
@@ -2118,12 +2121,18 @@ doparagraph(const char *b, const char *e, int n)
 					if (q < p && *q == '}') {
 						/* validate attrs */
 						char *tid, *tcls, *textra;
+						/* empty {}, or a comment carrying no attrs. A
+						 * comment at the very start is left to doreplace:
+						 * a multi-line one there was already rejected as a
+						 * block attribute and stays literal (djot.js). */
+						int empty = (q == s + 1)
+						    || (s > b && attrs_comment_only(s + 1, q));
 						int valid = parse_attrs(s + 1, q, &tid, &tcls, &textra)
-						    || (q == s + 1); /* empty {} */
+						    || empty;
 						free(tid); free(tcls); free(textra);
 						if (valid) {
-							if (q == s + 1) {
-								/* {} — consume silently */
+							if (empty) {
+								/* nothing to attach — consume silently */
 								s = q + 1;
 								transformed = 1;
 								continue;
@@ -2936,14 +2945,9 @@ dolink(const char *b, const char *e, int n)
 		if (ae < e && *ae == '}') {
 			char *sid = NULL, *scls = NULL, *sextra = NULL;
 			parse_attrs(ab, ae, &sid, &scls, &sextra);
-			if (!sid) {
-				/* invalid attrs: emit span, leave {...} as
-				 * literal trailing content (matches djot.js) */
-				oputs("<span>");
-				process(text, textend, 0);
-				oputs("</span>");
-				return q - b;
-			}
+			/* a span is only a span when a valid attribute follows;
+			 * otherwise the brackets stay literal (matches djot.js) */
+			if (!sid) return 0;
 			oputs("<span");
 			emit_attrs(sid, scls, sextra);
 			oputc('>');

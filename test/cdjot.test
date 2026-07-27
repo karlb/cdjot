@@ -1,82 +1,6 @@
 cdjot-specific tests: bugs found via corpus comparison against JS djot,
 plus regression tests for spec-correct behavior that JS djot gets wrong.
 
-Verbatim space stripping applies regardless of delimiter length.
-The spec says: "If the content starts or ends with a backtick character,
-a single space is removed between the opening or closing backticks and
-the content."
-
-```
-`` `foo` ``
-.
-<p><code>`foo`</code></p>
-```
-
-URL line continuation: "the line breaks and any leading and trailing
-space is ignored, and the lines are concatenated together."
-
-```
-[link](http://example.com?n=123
-    456)
-.
-<p><a href="http://example.com?n=123456">link</a></p>
-```
-
-Emphasis precedence: "When there are multiple openers that might be
-matched with a given closer, the closest one is used."
-
-```
-*not strong *strong*
-.
-<p>*not strong <strong>strong</strong></p>
-```
-
-Nested emphasis: "Emphasis can be nested."
-
-```
-__emphasis inside_ emphasis_
-.
-<p><em><em>emphasis inside</em> emphasis</em></p>
-```
-
-Loose list: when a list has blank lines (making it loose), ALL
-items should be wrapped in <p>, not just items with continuation.
-
-```
-- a
-- b
-- c
-
-  more
-
-- d
-.
-<ul>
-<li>
-<p>a</p>
-</li>
-<li>
-<p>b</p>
-</li>
-<li>
-<p>c</p>
-<p>more</p>
-</li>
-<li>
-<p>d</p>
-</li>
-</ul>
-```
-
-Image with inline attributes: attributes after ![alt](src){attrs}
-should go on the <img> tag, not wrap in a <span>.
-
-```
-![alt](img.jpg){.photo}
-.
-<p><img alt="alt" src="img.jpg" class="photo"></p>
-```
-
 Regression tests: these verify spec-correct behavior where the
 djot.js npm release (v0.3.2) diverged. Already fixed upstream.
 
@@ -174,14 +98,8 @@ Inline attributes on links: {key=val}, {.class}, {#id} after
 <p><a href="b" id="id" class="cls">a</a></p>
 ```
 
-Inline attributes on emphasis should attach to the element,
+Inline attributes on strong should attach to the element,
 not wrap in a <span>.
-
-```
-_emph_{.a}
-.
-<p><em class="a">emph</em></p>
-```
 
 ```
 *strong*{.a}
@@ -203,7 +121,7 @@ Inline attributes on sub/superscript:
 <p><sup class="a">sup</sup></p>
 ```
 
-Inline attributes on insert/delete/mark:
+Inline attributes on insert/delete:
 
 ```
 {+ins+}{.a}
@@ -217,19 +135,7 @@ Inline attributes on insert/delete/mark:
 <p><del class="a">del</del></p>
 ```
 
-```
-{=mark=}{.a}
-.
-<p><mark class="a">mark</mark></p>
-```
-
-Inline attributes on code spans:
-
-```
-`code`{.a}
-.
-<p><code class="a">code</code></p>
-```
+Inline attributes on code spans, with a quoted value:
 
 ```
 `code`{key="value"}
@@ -237,13 +143,7 @@ Inline attributes on code spans:
 <p><code key="value">code</code></p>
 ```
 
-Inline attributes on autolinks:
-
-```
-<https://example.com>{.a}
-.
-<p><a href="https://example.com" class="a">https://example.com</a></p>
-```
+Inline attributes on autolinks, with id and class:
 
 ```
 <https://example.com>{#id .cls}
@@ -578,17 +478,9 @@ foo</p>
 ```
 
 Inline attribute syntax with invalid chars renders the braces as
-literal trailing text rather than silently consuming them. Span
-syntax `[text]{...}` still emits the span (matching djot.js), with
-the malformed `{...}` left as literal trailing content; trailing
+literal trailing text rather than silently consuming them: trailing
 attrs on links, images, autolinks, and reference links are not
-consumed.
-
-```
-[text]{.x"y}
-.
-<p><span>text</span>{.x”y}</p>
-```
+consumed. (For spans, the brackets go literal too — see spans.test.)
 
 ```
 [link](url){.x"y}
@@ -711,26 +603,13 @@ shape is unchanged.
 </section>
 ```
 
-URL safety: a literal `<` or `>` in a link destination must be HTML-
-escaped in the emitted href/src so it can't break out of the
-attribute. Found via fuzz/proptest attrsafe on AFL-mutated URLs.
-
-```
-[a](http://x.com/<script>)
-.
-<p><a href="http://x.com/&lt;script&gt;">a</a></p>
-```
+URL safety: a literal `<` in an image destination must be HTML-escaped
+in the emitted src so it can't break out of the attribute. Found via
+fuzz/proptest attrsafe on AFL-mutated URLs. (The link equivalents are
+in links_and_images.test.)
 
 ```
 ![alt](/img/<svg)
 .
 <p><img alt="alt" src="/img/&lt;svg"></p>
-```
-
-Backslash-escaped `<` in a URL also goes through the escape path.
-
-```
-[a](x\<y)
-.
-<p><a href="x&lt;y">a</a></p>
 ```

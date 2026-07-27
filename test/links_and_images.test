@@ -50,6 +50,15 @@ andurl)
 <p><a href="urlandurl">link</a></p>
 ```
 
+Leading/trailing whitespace on continuation lines is stripped:
+
+```
+[link](http://example.com?n=123
+    456)
+.
+<p><a href="http://example.com?n=123456">link</a></p>
+```
+
 ```
 [link][]
 
@@ -157,6 +166,14 @@ Attributes on the link override those on references:
 <p><a href="url"><img alt="image" src="img.jpg"></a></p>
 ```
 
+Inline attributes on images go on the <img> tag:
+
+```
+![alt](img.jpg){.photo}
+.
+<p><img alt="alt" src="img.jpg" class="photo"></p>
+```
+
 ```
 [unclosed](hello *a
 b*
@@ -230,6 +247,23 @@ Autolinks:
 .
 <p><a href="http://example.com/foo">http://example.com/foo</a>
 <a href="mailto:me@example.com">me@example.com</a></p>
+```
+
+A literal `<` or `>` inside a parenthesized destination is part of
+the destination: it does not start an autolink or a raw HTML tag,
+and a preceding backslash escapes it to a literal character there
+too. (It is HTML-escaped in the emitted `href`.)
+
+```
+[a](http://x.com/<script>)
+.
+<p><a href="http://x.com/&lt;script&gt;">a</a></p>
+```
+
+```
+[a](x\<y)
+.
+<p><a href="x&lt;y">a</a></p>
 ```
 
 Openers inside `[..](` or `[..][` or `[..]{` can't match

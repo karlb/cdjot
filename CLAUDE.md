@@ -10,7 +10,7 @@ Single-file C99 djot-to-HTML converter. Reads stdin, writes stdout. No dependenc
 
 ```sh
 make            # build
-make test       # run test suite (268 tests)
+make test       # run test suite (323 tests)
 VERBOSE=1 sh test.sh          # show diff on failures
 VERBOSE=1 sh test.sh emphasis # run one category
 printf '# hi\n' | ./cdjot     # manual test
@@ -40,13 +40,13 @@ Key design decisions:
 ## Goals
 
 - Simplicity: single file, no deps, suckless-influenced style
-- Correctness: 268/268 tests passing
+- Correctness: 323/323 tests passing
 
 ## Tests
 
 - `test/*.test` — upstream tests from `jgm/djot.js`. Format: backtick-fenced blocks with `.` separating input from expected HTML
 - `test/cdjot.test` — cdjot-specific tests for bugs found via corpus comparison (not upstream)
-- Omitted upstream tests: symb.test, filters.test, sourcepos.test (N/A for HTML-only converter); 3 AST-format test blocks removed; 1 test adjusted for attribute emission order (no semantic effect)
+- Omitted upstream tests: symb.test, filters.test, sourcepos.test (N/A for HTML-only converter); 2 AST-format test blocks removed from attributes.test; 1 test adjusted for attribute emission order (no semantic effect)
 
 ## Corpus comparison
 
