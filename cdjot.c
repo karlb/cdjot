@@ -64,7 +64,7 @@ static void process(const char *b, const char *e, int newblock);
 static void hprint(const char *b, const char *e);
 static void clear_pending(void);
 static int has_pending(void);
-static void emit_attrs(const char *id, const char *cls, const char *extra);
+static void attr_emit(const char *a);
 static void emit_pending(void);
 
 /* Converter state — global for simplicity (smu-style). Not thread-safe;
@@ -120,10 +120,6 @@ static long bm_stack_cap;
 static char *obuf;
 static int olen, ocap;
 
-static char *pending_id;
-static int cap_pid;
-static char *pending_class;
-static int cap_pcls;
 static char *pending_attrs;
 static int cap_pattr;
 
@@ -198,27 +194,6 @@ pensure(char **buf, int *cap, int need)
 		*buf = realloc(*buf, *cap);
 		if (!*buf) die("malloc");
 	}
-}
-
-static void
-pset(char **buf, int *cap, const char *s)
-{
-	int len = strlen(s) + 1;
-	pensure(buf, cap, len);
-	memcpy(*buf, s, len);
-}
-
-/* append s to buf with space separator (for class lists).
- * buf must be non-NULL and NUL-terminated. */
-static void
-pcat(char **buf, int *cap, const char *s)
-{
-	int cur = *buf ? strlen(*buf) : 0;
-	int slen = strlen(s);
-	int sep = (cur > 0) ? 1 : 0;
-	pensure(buf, cap, cur + sep + slen + 1);
-	if (sep) (*buf)[cur++] = ' ';
-	memcpy(*buf + cur, s, slen + 1);
 }
 
 static void
@@ -434,44 +409,128 @@ close_sections(int level)
 #define IS_NAME_CHAR(c) (isalnum((unsigned char)(c)) \
     || (c) == '_' || (c) == ':' || (c) == '-')
 
+/* Attribute lists are a flat run of NUL-terminated name/value pairs in
+ * declaration order, closed by an empty name: "id\0x\0class\0y\0\0".
+ * djot.js emits attributes in the order they were written, interleaving
+ * classes with key=value pairs, so the order has to live in the structure
+ * rather than in a fixed emit sequence. Values are stored unescaped and
+ * escaped on output. */
+enum { ATTR_SET, ATTR_APPEND, ATTR_PREPEND };
+
+/* size of a in bytes, including the closing empty name */
 static int
-parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap)
+attrs_size(const char *a)
+{
+	const char *p = a;
+	while (*p) {
+		p += strlen(p) + 1;
+		p += strlen(p) + 1;
+	}
+	return p - a + 1;
+}
+
+/* value of name, or NULL if absent */
+static char *
+attr_find(const char *a, const char *name)
+{
+	const char *p = a;
+	while (p && *p) {
+		const char *v = p + strlen(p) + 1;
+		if (!strcmp(p, name)) return (char *)v;
+		p = v + strlen(v) + 1;
+	}
+	return NULL;
+}
+
+/* Store name=val. An existing name keeps its position: ATTR_SET replaces
+ * the value, ATTR_APPEND/ATTR_PREPEND join to it with a space (class
+ * lists accumulate). A new name goes on the end. */
+static void
+attr_put(char **a, int *cap, const char *name, const char *val, int mode)
+{
+	int nlen = strlen(name), vlen = strlen(val);
+	int size = attrs_size(*a);
+	char *old = attr_find(*a, name);
+
+	if (!old) {
+		char *p;
+		pensure(a, cap, size + nlen + 1 + vlen + 1);
+		p = *a + size - 1;	/* the closing empty name */
+		memcpy(p, name, nlen + 1);
+		p += nlen + 1;
+		memcpy(p, val, vlen + 1);
+		p[vlen + 1] = '\0';
+		return;
+	}
+	{
+		int off = old - *a;
+		int olen = strlen(old);
+		int newlen = (mode == ATTR_SET) ? vlen : olen + 1 + vlen;
+		int tail = size - (off + olen + 1);
+		pensure(a, cap, size + newlen - olen);
+		old = *a + off;
+		memmove(old + newlen + 1, old + olen + 1, tail);
+		if (mode == ATTR_APPEND) {
+			old[olen] = ' ';
+			memcpy(old + olen + 1, val, vlen);
+		} else if (mode == ATTR_PREPEND) {
+			memmove(old + vlen + 1, old, olen);
+			memcpy(old, val, vlen);
+			old[vlen] = ' ';
+		} else {
+			memcpy(old, val, vlen);
+		}
+		old[newlen] = '\0';
+	}
+}
+
+/* fold src into a, following the same last-value-wins / classes-accumulate
+ * rules that apply within a single {...} spec */
+static void
+attr_merge(char **a, int *cap, const char *src)
+{
+	const char *p = src;
+	while (p && *p) {
+		const char *v = p + strlen(p) + 1;
+		attr_put(a, cap, p, v,
+		    strcmp(p, "class") ? ATTR_SET : ATTR_APPEND);
+		p = v + strlen(v) + 1;
+	}
+}
+
+/* Parse the content between { and }. On success *outp is an attribute
+ * list (possibly empty, e.g. for a lone comment) that the caller frees;
+ * on a syntax error *outp is NULL. Returns whether any attrs were found. */
+static int
+parse_attrs(const char *b, const char *e, char **outp)
 {
 	const char *p = b;
-	int idn = 0, cn = 0, en = 0;
 	int len = e - b;
-	/* id/class need at most input length; extra needs more for &quot; expansion */
-	char *id = malloc(len + 1);
-	char *cls = malloc(len + 1);
-	char *extra = malloc(len * 6 + 16);
+	int cap = 16;
+	char *out = malloc(cap);
+	char *name = malloc(len + 1);
+	char *val = malloc(len + 1);
 
-	if (!id || !cls || !extra) die("malloc");
-	id[0] = cls[0] = extra[0] = '\0';
+	if (!out || !name || !val) die("malloc");
+	out[0] = '\0';
 
 	while (p < e) {
+		int n = 0;
 		while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
 		if (p >= e) break;
-		if (*p == '#') {
-			/* id */
+		if (*p == '#' || *p == '.') {
+			int isid = (*p == '#');
 			p++;
 			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
 			    && *p != '}') {
 				if (!IS_NAME_CHAR(*p)) goto fail;
-				id[idn++] = *p;
+				val[n++] = *p;
 				p++;
 			}
-			id[idn] = '\0';
-		} else if (*p == '.') {
-			/* class */
-			p++;
-			if (cn > 0) cls[cn++] = ' ';
-			while (p < e && *p != ' ' && *p != '\t' && *p != '\n'
-			    && *p != '}') {
-				if (!IS_NAME_CHAR(*p)) goto fail;
-				cls[cn++] = *p;
-				p++;
-			}
-			cls[cn] = '\0';
+			val[n] = '\0';
+			if (n > 0)
+				attr_put(&out, &cap, isid ? "id" : "class",
+				    val, isid ? ATTR_SET : ATTR_APPEND);
 		} else if (*p == '%') {
 			/* comment: skip to next % or end */
 			p++;
@@ -479,64 +538,44 @@ parse_attrs(const char *b, const char *e, char **idp, char **clsp, char **extrap
 			if (p < e) p++; /* skip closing % */
 		} else if (isalpha((unsigned char)*p)) {
 			/* key=val */
-			if (en > 0) extra[en++] = ' ';
+			int kn = 0;
 			while (p < e && *p != '=' && *p != ' ' && *p != '}') {
 				if (!IS_NAME_CHAR(*p)) goto fail;
-				extra[en++] = *p;
+				name[kn++] = *p;
 				p++;
 			}
+			name[kn] = '\0';
 			if (p < e && *p == '=') {
-				extra[en++] = '=';
 				p++;
 				if (p < e && *p == '"') {
-					extra[en++] = '"';
 					p++;
 					while (p < e && *p != '"') {
-						if (*p == '\\' && p + 1 < e) {
-							p++; /* skip backslash */
-							if (*p == '\\') {
-								extra[en++] = '\\';
-								p++;
-							} else if (*p == '"') {
-								/* escaped quote: emit &quot; */
-								memcpy(extra + en, "&quot;", 6);
-								en += 6;
-								p++;
-							} else {
-								if (*p) extra[en++] = *p;
-								p++;
-							}
-						} else {
-							if (*p) extra[en++] = *p;
-							p++;
-						}
-					}
-					if (p < e) { extra[en++] = '"'; p++; }
-				} else {
-					/* unquoted values are restricted; quoted ones aren't */
-					extra[en++] = '"';
-					while (p < e && *p != ' ' && *p != '}') {
-						if (!IS_NAME_CHAR(*p)) goto fail;
-						extra[en++] = *p;
+						if (*p == '\\' && p + 1 < e) p++;
+						if (*p) val[n++] = *p;
 						p++;
 					}
-					extra[en++] = '"';
+					if (p < e) p++;
+				} else {
+					/* unquoted values are restricted; quoted ones aren't */
+					while (p < e && *p != ' ' && *p != '}') {
+						if (!IS_NAME_CHAR(*p)) goto fail;
+						val[n++] = *p;
+						p++;
+					}
 				}
 			}
-			extra[en] = '\0';
+			val[n] = '\0';
+			attr_put(&out, &cap, name, val, ATTR_SET);
 		} else {
 			goto fail;
 		}
 	}
-	if (idp) *idp = id; else free(id);
-	if (clsp) *clsp = cls; else free(cls);
-	if (extrap) *extrap = extra; else free(extra);
-	return idn > 0 || cn > 0 || en > 0;
+	free(name); free(val);
+	*outp = out;
+	return out[0] != '\0';
 fail:
-	free(id); free(cls); free(extra);
-	if (idp) *idp = NULL;
-	if (clsp) *clsp = NULL;
-	if (extrap) *extrap = NULL;
+	free(out); free(name); free(val);
+	*outp = NULL;
 	return 0;
 }
 
@@ -570,29 +609,27 @@ oputs_attr(const char *s)
 }
 
 static void
-emit_attrs(const char *id, const char *cls, const char *extra)
+attr_emit(const char *a)
 {
-	if (id && id[0]) {
-		oputs(" id=\"");
-		oputs_attr(id);
+	const char *p = a;
+	while (p && *p) {
+		const char *v = p + strlen(p) + 1;
+		oputc(' ');
+		oputs(p);
+		oputs("=\"");
+		oputs_attr(v);
 		oputc('"');
+		p = v + strlen(v) + 1;
 	}
-	if (cls && cls[0]) {
-		oputs(" class=\"");
-		oputs_attr(cls);
-		oputc('"');
-	}
-	if (extra && extra[0]) oprintf(" %s", extra);
 }
 
 /* Scan for trailing inline attrs {…} starting at p.
  * Returns pointer past '}' if found, or p if not. */
 static const char *
-scan_inline_attrs(const char *p, const char *e,
-    char **sid, char **scls, char **sextra)
+scan_inline_attrs(const char *p, const char *e, char **sa)
 {
 	const char *ab, *ae;
-	*sid = *scls = *sextra = NULL;
+	*sa = NULL;
 	if (p >= e || *p != '{') return p;
 	ab = p + 1;
 	ae = ab;
@@ -608,8 +645,8 @@ scan_inline_attrs(const char *p, const char *e,
 		} else ae++;
 	}
 	if (ae >= e || *ae != '}') return p;
-	parse_attrs(ab, ae, sid, scls, sextra);
-	if (!*sid) return p; /* invalid syntax: leave {...} as literal */
+	parse_attrs(ab, ae, sa);
+	if (!*sa) return p; /* invalid syntax: leave {...} as literal */
 	return ae + 1;
 }
 
@@ -642,8 +679,7 @@ emit_code_open(const char *info, const char *infoend)
 
 /* check previous line for {attrs} block */
 static void
-prev_line_attrs(const char *line, const char *start,
-    char **idp, char **clsp, char **extrap)
+prev_line_attrs(const char *line, const char *start, char **sa)
 {
 	const char *prev, *pp, *pe;
 	if (line <= start) return;
@@ -655,7 +691,7 @@ prev_line_attrs(const char *line, const char *start,
 	pe = pp + 1;
 	while (pe < line && *pe != '}') pe++;
 	if (pe < line && *pe == '}')
-		parse_attrs(pp + 1, pe, idp, clsp, extrap);
+		parse_attrs(pp + 1, pe, sa);
 }
 
 /* Find or insert key in id_ht; returns pointer to entry */
@@ -709,22 +745,20 @@ dedup_id(char *id, int sz)
 static void
 clear_pending(void)
 {
-	pending_id[0] = '\0';
-	pending_class[0] = '\0';
 	pending_attrs[0] = '\0';
 }
 
 static int
 has_pending(void)
 {
-	return pending_id[0] || pending_class[0] || pending_attrs[0];
+	return pending_attrs[0] != '\0';
 }
 
 static void
 emit_pending(void)
 {
 	if (has_pending()) {
-		emit_attrs(pending_id, pending_class, pending_attrs);
+		attr_emit(pending_attrs);
 		clear_pending();
 	}
 }
@@ -1108,16 +1142,16 @@ done:
 		in_container = 1;
 		/* merge div class name into pending_class */
 		if (cls < clsend) {
-			int cn = strlen(pending_class);
-			int add = clsend - cls;
-			int sep = (cn > 0) ? 1 : 0;
-			pensure(&pending_class, &cap_pcls, cn + sep + add + 1);
-			if (sep) pending_class[cn++] = ' ';
-			memcpy(pending_class + cn, cls, add);
-			pending_class[cn + add] = '\0';
+			char *cbuf = malloc(clsend - cls + 1);
+			if (!cbuf) die("malloc");
+			memcpy(cbuf, cls, clsend - cls);
+			cbuf[clsend - cls] = '\0';
+			attr_put(&pending_attrs, &cap_pattr, "class", cbuf,
+			    ATTR_APPEND);
+			free(cbuf);
 		}
 		oputs("<div");
-		emit_attrs(pending_id, pending_class, pending_attrs);
+		attr_emit(pending_attrs);
 		oputs(">\n");
 		clear_pending();
 		process(buf, buf + i, 1);
@@ -1174,22 +1208,16 @@ doattr(const char *b, const char *e, int n)
 			return 0;
 	}
 	{
-		char *tid, *tcls, *textra;
+		char *ta;
 		/* pure comment block — consume the line(s) */
 		if (attrs_comment_only(p + 1, q))
 			return -(eol(q, e) - b);
-		if (!parse_attrs(p + 1, q, &tid, &tcls, &textra)) {
-			free(tid); free(tcls); free(textra);
+		if (!parse_attrs(p + 1, q, &ta)) {
+			free(ta);
 			return 0;
 		}
-		/* merge into pending */
-		if (tid[0])
-			pset(&pending_id, &cap_pid, tid);
-		if (tcls[0])
-			pcat(&pending_class, &cap_pcls, tcls);
-		if (textra[0])
-			pset(&pending_attrs, &cap_pattr, textra);
-		free(tid); free(tcls); free(textra);
+		attr_merge(&pending_attrs, &cap_pattr, ta);
+		free(ta);
 	}
 	/* consume up to and including the line containing } */
 	return -(eol(q, e) - b);
@@ -1302,8 +1330,10 @@ doheading(const char *b, const char *e, int n)
 
 	{
 		char hid[256];
-		if (pending_id[0]) {
-			snprintf(hid, sizeof(hid) - 12, "%s", pending_id);
+		const char *pid = attr_find(pending_attrs, "id");
+		const char *pcls = attr_find(pending_attrs, "class");
+		if (pid && pid[0]) {
+			snprintf(hid, sizeof(hid) - 12, "%s", pid);
 		} else if (blen > 0) {
 			make_slug(buf, blen, hid, sizeof(hid) - 12);
 		} else {
@@ -1319,8 +1349,11 @@ doheading(const char *b, const char *e, int n)
 		oprintf("<h%d", level);
 		if (in_container)
 			oprintf(" id=\"%s\"", hid);
-		if (pending_class[0])
-			oprintf(" class=\"%s\"", pending_class);
+		if (pcls && pcls[0]) {
+			oputs(" class=\"");
+			oputs_attr(pcls);
+			oputc('"');
+		}
 		oputc('>');
 		clear_pending();
 	}
@@ -1718,19 +1751,12 @@ dolist(const char *b, const char *e, int n)
 	}
 
 	if (style == 0) {
-		if (is_task) {
-			if (pending_class[0]) {
-				int cn = strlen(pending_class);
-				pensure(&pending_class, &cap_pcls, cn + 11);
-				memmove(pending_class + 10, pending_class, cn + 1);
-				memcpy(pending_class, "task-list ", 10);
-			} else {
-				pset(&pending_class, &cap_pcls, "task-list");
-			}
-		}
+		if (is_task)
+			attr_put(&pending_attrs, &cap_pattr, "class",
+			    "task-list", ATTR_PREPEND);
 		oputs("<ul");
 		if (has_pending()) {
-			emit_attrs(pending_id, pending_class, pending_attrs);
+			attr_emit(pending_attrs);
 			clear_pending();
 		}
 		oputs(">\n");
@@ -2120,16 +2146,15 @@ doparagraph(const char *b, const char *e, int n)
 					}
 					if (q < p && *q == '}') {
 						/* validate attrs */
-						char *tid, *tcls, *textra;
+						char *ta;
 						/* empty {}, or a comment carrying no attrs. A
 						 * comment at the very start is left to doreplace:
 						 * a multi-line one there was already rejected as a
 						 * block attribute and stays literal (djot.js). */
 						int empty = (q == s + 1)
 						    || (s > b && attrs_comment_only(s + 1, q));
-						int valid = parse_attrs(s + 1, q, &tid, &tcls, &textra)
-						    || empty;
-						free(tid); free(tcls); free(textra);
+						int valid = parse_attrs(s + 1, q, &ta) || empty;
+						free(ta);
 						if (valid) {
 							if (empty) {
 								/* nothing to attach — consume silently */
@@ -2216,9 +2241,15 @@ doparagraph(const char *b, const char *e, int n)
 		if (!tight) {
 			oputs("<p");
 			if (has_pending()) {
-				if (pending_id[0])
-					dedup_id(pending_id, cap_pid);
-				emit_attrs(pending_id, pending_class, pending_attrs);
+				const char *pid = attr_find(pending_attrs, "id");
+				if (pid && pid[0]) {
+					char idbuf[256];
+					snprintf(idbuf, sizeof(idbuf), "%s", pid);
+					dedup_id(idbuf, sizeof(idbuf));
+					attr_put(&pending_attrs, &cap_pattr,
+					    "id", idbuf, ATTR_SET);
+				}
+				attr_emit(pending_attrs);
 			}
 			clear_pending();
 			oputc('>');
@@ -2339,18 +2370,18 @@ docode(const char *b, const char *e, int n)
 				oputs("</span>");
 				return p + count - start;
 			} else {
-				char *sid = NULL, *scls = NULL, *sextra = NULL;
+				char *sa = NULL;
 				const char *aend = after;
 				/* parse inline attrs unless {=format} attempt */
 				if (!(after < e && *after == '{' && after + 1 < e
 				    && after[1] == '='))
-					aend = scan_inline_attrs(after, e, &sid, &scls, &sextra);
+					aend = scan_inline_attrs(after, e, &sa);
 				oputs("<code");
-				emit_attrs(sid, scls, sextra);
+				attr_emit(sa);
 				oputc('>');
 				hprint(code, code + codelen);
 				oputs("</code>");
-				free(sid); free(scls); free(sextra);
+				free(sa);
 				return aend - start;
 			}
 		}
@@ -2434,15 +2465,15 @@ dosurround(const char *b, const char *e, int n)
 					if (!isws(bb) && rp > b + run) {
 						const char *ot, *ct;
 						int j, otlen;
-						char *sid, *scls, *sextra;
+						char *sa;
 						const char *end;
 						surround_lookup(ch, &ot, &ct);
-						end = scan_inline_attrs(rp + run, e, &sid, &scls, &sextra);
+						end = scan_inline_attrs(rp + run, e, &sa);
 						otlen = strlen(ot);
 						for (j = 0; j < run; j++) {
 							if (j == 0 && end > rp + run) {
 								owrite(ot, otlen - 1);
-								emit_attrs(sid, scls, sextra);
+								attr_emit(sa);
 								oputc('>');
 							} else {
 								oputs(ot);
@@ -2451,7 +2482,7 @@ dosurround(const char *b, const char *e, int n)
 						process(b + run, rp, 0);
 						for (j = 0; j < run; j++)
 							oputs(ct);
-						free(sid); free(scls); free(sextra);
+						free(sa);
 						return end - b;
 					}
 				}
@@ -2605,22 +2636,22 @@ dosurround(const char *b, const char *e, int n)
 				stop = p;
 				{
 					const char *otag, *ctag;
-					char *sid, *scls, *sextra;
+					char *sa;
 					const char *after_close, *aend;
 					surround_lookup(ch, &otag, &ctag);
 					after_close = stop + 1 + (explicit_close ? 1 : 0);
-					aend = scan_inline_attrs(after_close, e, &sid, &scls, &sextra);
+					aend = scan_inline_attrs(after_close, e, &sa);
 					if (aend > after_close) {
 						int otlen = strlen(otag);
 						owrite(otag, otlen - 1);
-						emit_attrs(sid, scls, sextra);
+						attr_emit(sa);
 						oputc('>');
 					} else {
 						oputs(otag);
 					}
 					process(start, stop, 0);
 					oputs(ctag);
-					free(sid); free(scls); free(sextra);
+					free(sa);
 					return aend - b;
 				}
 			}
@@ -2833,18 +2864,18 @@ dolink(const char *b, const char *e, int n)
 				const char *ae = ab;
 				while (ae < e && *ae != '}') ae++;
 				if (ae < e && *ae == '}') {
-					char *sid = NULL, *scls = NULL, *sextra = NULL;
-					parse_attrs(ab, ae, &sid, &scls, &sextra);
-					if (sid) {
-						emit_attrs(sid, scls, sextra);
-						free(sid); free(scls); free(sextra);
+					char *sa = NULL;
+					parse_attrs(ab, ae, &sa);
+					if (sa) {
+						attr_emit(sa);
+						free(sa);
 						q = ae; /* advance past } */
 					}
 				}
 			}
 			oputs(">");
 		} else {
-			char *sid = NULL, *scls = NULL, *sextra = NULL;
+			char *sa = NULL;
 			const char *after = q + 1;
 			/* check for inline attributes {.class #id key=val ...} */
 			if (after < e && *after == '{') {
@@ -2862,18 +2893,18 @@ dolink(const char *b, const char *e, int n)
 					} else ae++;
 				}
 				if (ae < e && *ae == '}') {
-					parse_attrs(ab, ae, &sid, &scls, &sextra);
-					if (sid) q = ae;
+					parse_attrs(ab, ae, &sa);
+					if (sa) q = ae;
 				}
 			}
 			oputs("<a href=\"");
 			emit_url(dest, destend);
 			oputs("\"");
-			emit_attrs(sid, scls, sextra);
+			attr_emit(sa);
 			oputs(">");
 			process(text, textend, 0);
 			oputs("</a>");
-			free(sid); free(scls); free(sextra);
+			free(sa);
 		}
 		return q + 1 - b;
 	}
@@ -2899,7 +2930,7 @@ dolink(const char *b, const char *e, int n)
 					const char *ae = ab;
 					while (ae < e && *ae != '}' && *ae != '\n') ae++;
 					if (ae < e && *ae == '}') {
-						parse_attrs(ab, ae, NULL, NULL, &inline_attr);
+						parse_attrs(ab, ae, &inline_attr);
 						if (inline_attr) q = ae; /* consume the {attrs} */
 					}
 				}
@@ -2910,13 +2941,13 @@ dolink(const char *b, const char *e, int n)
 					oputs("\" src=\"");
 					emit_url(url, url + urllen);
 					oputc('"');
-					if (rattr[0]) oprintf(" %s", rattr);
+					attr_emit(rattr);
 					oputs(">");
 				} else {
 					oputs("<a href=\"");
 					emit_url(url, url + urllen);
 					oputc('"');
-					if (rattr[0]) oprintf(" %s", rattr);
+					attr_emit(rattr);
 					oputs(">");
 					process(text, textend, 0);
 					oputs("</a>");
@@ -2943,17 +2974,17 @@ dolink(const char *b, const char *e, int n)
 		const char *ae = ab;
 		while (ae < e && *ae != '}') ae++;
 		if (ae < e && *ae == '}') {
-			char *sid = NULL, *scls = NULL, *sextra = NULL;
-			parse_attrs(ab, ae, &sid, &scls, &sextra);
+			char *sa = NULL;
+			parse_attrs(ab, ae, &sa);
 			/* a span is only a span when a valid attribute follows;
 			 * otherwise the brackets stay literal (matches djot.js) */
-			if (!sid) return 0;
+			if (!sa) return 0;
 			oputs("<span");
-			emit_attrs(sid, scls, sextra);
+			attr_emit(sa);
 			oputc('>');
 			process(text, textend, 0);
 			oputs("</span>");
-			free(sid); free(scls); free(sextra);
+			free(sa);
 			return ae + 1 - b;
 		}
 	}
@@ -2971,8 +3002,8 @@ doautolink(const char *b, const char *e, int n)
 	if (!memchr(b + 1, ':', p - b - 1) && !memchr(b + 1, '@', p - b - 1))
 		return 0;
 	{
-		char *sid, *scls, *sextra;
-		const char *aend = scan_inline_attrs(p + 1, e, &sid, &scls, &sextra);
+		char *sa;
+		const char *aend = scan_inline_attrs(p + 1, e, &sa);
 		if (memchr(b + 1, '@', p - b - 1) && !memchr(b + 1, ':', p - b - 1)) {
 			oputs("<a href=\"mailto:");
 			hprint(b + 1, p);
@@ -2982,11 +3013,11 @@ doautolink(const char *b, const char *e, int n)
 			emit_url(b + 1, p);
 			oputs("\"");
 		}
-		emit_attrs(sid, scls, sextra);
+		attr_emit(sa);
 		oputs(">");
 		hprint(b + 1, p);
 		oputs("</a>");
-		free(sid); free(scls); free(sextra);
+		free(sa);
 		return aend - b;
 	}
 }
@@ -3426,8 +3457,7 @@ prescan(const char *b, const char *e)
 						refs[nrefs].url = u;
 						refs[nrefs].urllen = urlbuflen;
 						refs[nrefs].attrs = NULL;
-						prev_line_attrs(line, b,
-						    NULL, NULL, &refs[nrefs].attrs);
+						prev_line_attrs(line, b, &refs[nrefs].attrs);
 						if (!refs[nrefs].attrs) {
 							refs[nrefs].attrs = malloc(1);
 							if (refs[nrefs].attrs)
@@ -3471,9 +3501,10 @@ prescan(const char *b, const char *e)
 			if (findref_range(hdefs[hi].content, hdefs[hi].len,
 			    href_start, nrefs))
 				continue;
-			char *custom_id = NULL;
-			prev_line_attrs(hdefs[hi].line, b,
-			    &custom_id, NULL, NULL);
+			char *hattrs = NULL;
+			const char *custom_id;
+			prev_line_attrs(hdefs[hi].line, b, &hattrs);
+			custom_id = hattrs ? attr_find(hattrs, "id") : NULL;
 			char idbuf[256];
 			int idn;
 			if (custom_id && custom_id[0]) {
@@ -3506,7 +3537,7 @@ prescan(const char *b, const char *e)
 					nrefs++;
 				}
 			}
-			free(custom_id);
+			free(hattrs);
 		}
 	}
 	free(hdefs);
@@ -3634,12 +3665,10 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	bm_stack = NULL;
 	bm_stack_cap = 0;
 
-	cap_pid = cap_pcls = cap_pattr = 16;
-	pending_id = malloc(cap_pid);
-	pending_class = malloc(cap_pcls);
+	cap_pattr = 16;
 	pending_attrs = malloc(cap_pattr);
-	if (!pending_id || !pending_class || !pending_attrs) die("malloc");
-	pending_id[0] = pending_class[0] = pending_attrs[0] = '\0';
+	if (!pending_attrs) die("malloc");
+	pending_attrs[0] = '\0';
 
 	prescan(buf, buf + len);
 	process(buf, buf + len, 1);
@@ -3666,14 +3695,12 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 		free(id_ht[i].key);
 	free(id_ht);
 	free(urlbuf);
-	free(pending_id);
-	free(pending_class);
 	free(pending_attrs);
 	free(bm_stack);
 
 	refs = NULL; footnotes = NULL; id_ht = NULL;
 	urlbuf = NULL;
-	pending_id = pending_class = pending_attrs = NULL;
+	pending_attrs = NULL;
 	bm_stack = NULL; bm_stack_cap = 0;
 
 	return 0;

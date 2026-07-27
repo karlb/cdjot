@@ -30,6 +30,7 @@ printf '# hi\n' | ./cdjot     # manual test
 Key design decisions:
 - Direct stdout output (no intermediate buffers except for list items, blockquotes, divs, and footnotes which need recursive processing)
 - `{#id .class key=val}` attributes stored as pending globals, consumed by the next block parser; inline attrs pre-processed in `doparagraph` by transforming `word{attrs}` → `[word]{attrs}` (skips `]{attrs}` and `](url){attrs}` which are handled by `dolink` directly)
+- Attribute lists are a flat run of NUL-separated name/value pairs in declaration order (`attr_put`/`attr_find`/`attr_merge`/`attr_emit`). djot.js emits attributes in the order written, interleaving classes with `key=val`, so order lives in the structure rather than in a fixed emit sequence. Values are stored unescaped and escaped on output
 - List items collected into a buffer, then `process()` recurses on the buffer
 - Tight/loose list detection: `dolist` pre-scans the entire list for blank lines before emitting any items, so all items get consistent `<p>` wrapping when loose
 - Smart quotes use look-ahead stack simulation to match openers with closers
@@ -46,7 +47,7 @@ Key design decisions:
 
 - `test/*.test` — upstream tests from `jgm/djot.js`. Format: backtick-fenced blocks with `.` separating input from expected HTML
 - `test/cdjot.test` — cdjot-specific tests for bugs found via corpus comparison (not upstream)
-- Omitted upstream tests: symb.test, filters.test, sourcepos.test (N/A for HTML-only converter); 2 AST-format test blocks removed from attributes.test; 1 test adjusted for attribute emission order (no semantic effect)
+- Upstream test files are copied verbatim — no local edits. Omitted: symb.test, filters.test, sourcepos.test (N/A for HTML-only converter). AST-format blocks (fences with an info string, ` ``` a `) have no HTML to compare and are skipped by the runner
 
 ## Corpus comparison
 

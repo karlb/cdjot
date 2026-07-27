@@ -95,7 +95,7 @@ Inline attributes on links: {key=val}, {.class}, {#id} after
 ```
 [a](b){.cls #id}
 .
-<p><a href="b" id="id" class="cls">a</a></p>
+<p><a href="b" class="cls" id="id">a</a></p>
 ```
 
 Inline attributes on strong should attach to the element,

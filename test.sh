@@ -2,13 +2,11 @@
 # Test runner for djot-to-HTML converter
 # Parses .test files: blocks delimited by backtick fences, . separates input from expected
 #
-# Tests are from jgm/djot.js. Omitted/modified tests:
+# Tests are from jgm/djot.js, copied verbatim — no local edits. Omitted files:
 # - symb.test: uses AST output format, not HTML (djot symbols have no standard HTML mapping)
-# - attributes.test (2 trailing blocks): use AST output format for multi-line attribute edge cases
-# - attributes.test #22: expected output adjusted — attrs are correct but emitted in
-#   id/class/extra order rather than declaration order across multiple {..} blocks.
-#   HTML attribute order has no semantic effect.
 # - filters.test, sourcepos.test: not applicable to a simple stdin-to-stdout converter
+# Fences carrying an info string (``` a) hold AST-format blocks with no HTML to
+# compare against; the runner skips them.
 
 pass=0
 fail=0
@@ -29,8 +27,17 @@ is_backtick_fence() {
 	return 1
 }
 
+# any fence, including one carrying an info string (``` a)
+is_fence() {
+	case "$1" in
+	\`\`\`*) return 0 ;;
+	esac
+	return 1
+}
+
+# length of the leading backtick run
 fence_len() {
-	printf '%s' "$1" | wc -c | tr -d ' '
+	printf '%s' "$1" | sed 's/[^`].*$//' | wc -c | tr -d ' '
 }
 
 for f in test/*.test; do
@@ -56,6 +63,21 @@ for f in test/*.test; do
 				state="input"
 				input=""
 				expected=""
+			elif is_fence "$line"; then
+				# fence with an info string: upstream uses these for
+				# AST-format blocks, which have no HTML to compare.
+				# Skip to the closing fence so the block's contents
+				# aren't mistaken for a test.
+				fmarklen=$(fence_len "$line")
+				state="skip"
+			fi
+			;;
+		skip)
+			if is_backtick_fence "$line"; then
+				clen=$(fence_len "$line")
+				if [ "$clen" -ge "$fmarklen" ]; then
+					state="outside"
+				fi
 			fi
 			;;
 		input)

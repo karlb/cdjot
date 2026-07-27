@@ -180,7 +180,7 @@ but classes accumulate:
 {#id2}
 Okay
 .
-<p id="id2" class="foo bar baz" key="val2">Okay</p>
+<p id="id2" key="val2" class="foo bar baz">Okay</p>
 ```
 
 Attributes on different kinds of blocks:
@@ -342,4 +342,32 @@ text{a=x
 {a=" inline text
 .
 <p>{a=“ inline text</p>
+```
+
+
+``` a
+{
+ attr="long
+ value
+ spanning
+ multiple
+ lines"
+ }
+> a
+.
+doc
+  block_quote attr="long value spanning multiple lines"
+    para
+      str text="a"
+```
+
+``` a
+> {key="bar
+>    a\$bim"}
+> ou
+.
+doc
+  block_quote
+    para key="bar a$bim"
+      str text="ou"
 ```
