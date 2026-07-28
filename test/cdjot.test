@@ -668,3 +668,27 @@ applied and a failed block attribute line starts a paragraph.
 <p>{.a key}
 # not a heading</p>
 ```
+
+Headings used to emit only id and class, silently dropping any other
+key=value attribute. All attributes are emitted, in declaration order.
+The id is the exception: it goes on the enclosing <section>, and only
+when a heading is inside a container (so no section is opened) does it
+appear on the tag itself -- prepended when auto-generated, in place when
+written explicitly.
+
+```
+{a=b .c}
+# abc
+
+:::
+{a=b #x}
+## sub
+:::
+.
+<section id="abc">
+<h1 a="b" class="c">abc</h1>
+<div>
+<h2 a="b" id="x">sub</h2>
+</div>
+</section>
+```

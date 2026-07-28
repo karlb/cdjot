@@ -608,19 +608,30 @@ oputs_attr(const char *s)
 	}
 }
 
+/* Emit every attribute but skip, which may be NULL. Headings emit their
+ * id separately: it goes on the enclosing <section>, or is prepended to
+ * the tag when it was auto-generated. */
 static void
-attr_emit(const char *a)
+attr_emit_except(const char *a, const char *skip)
 {
 	const char *p = a;
 	while (p && *p) {
 		const char *v = p + strlen(p) + 1;
-		oputc(' ');
-		oputs(p);
-		oputs("=\"");
-		oputs_attr(v);
-		oputc('"');
+		if (!skip || strcmp(p, skip)) {
+			oputc(' ');
+			oputs(p);
+			oputs("=\"");
+			oputs_attr(v);
+			oputc('"');
+		}
 		p = v + strlen(v) + 1;
 	}
+}
+
+static void
+attr_emit(const char *a)
+{
+	attr_emit_except(a, NULL);
 }
 
 /* Scan for trailing inline attrs {…} starting at p.
@@ -1331,7 +1342,6 @@ doheading(const char *b, const char *e, int n)
 	{
 		char hid[256];
 		const char *pid = attr_find(pending_attrs, "id");
-		const char *pcls = attr_find(pending_attrs, "class");
 		if (pid && pid[0]) {
 			snprintf(hid, sizeof(hid) - 12, "%s", pid);
 		} else if (blen > 0) {
@@ -1347,12 +1357,15 @@ doheading(const char *b, const char *e, int n)
 			if (nsections < 6) sections[nsections++] = level;
 		}
 		oprintf("<h%d", level);
-		if (in_container)
-			oprintf(" id=\"%s\"", hid);
-		if (pcls && pcls[0]) {
-			oputs(" class=\"");
-			oputs_attr(pcls);
-			oputc('"');
+		if (in_container && pid && pid[0]) {
+			/* an explicit id keeps its declaration position */
+			attr_put(&pending_attrs, &cap_pattr, "id", hid,
+			    ATTR_SET);
+			attr_emit(pending_attrs);
+		} else {
+			if (in_container)
+				oprintf(" id=\"%s\"", hid);
+			attr_emit_except(pending_attrs, "id");
 		}
 		oputc('>');
 		clear_pending();
