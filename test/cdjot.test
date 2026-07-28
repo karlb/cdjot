@@ -1,81 +1,6 @@
 cdjot-specific tests: bugs found via corpus comparison against JS djot,
-plus regression tests for spec-correct behavior that JS djot gets wrong.
-
-Regression tests: these verify spec-correct behavior where the
-djot.js npm release (v0.3.2) diverged. Already fixed upstream.
-
-Emphasis delimiters inside link URLs don't close emphasis:
-
-```
-*[closed](hello*)
-.
-<p>*<a href="hello*">closed</a></p>
-```
-
-```
-_[link](http://example.com?foo_bar=1), more text_
-.
-<p><em><a href="http://example.com?foo_bar=1">link</a>, more text</em></p>
-```
-
-Block attributes require no blank line before the block:
-
-```
-{#id .class}
-
-A paragraph
-.
-<p>A paragraph</p>
-```
-
-Heading auto-ID excludes footnote reference text (spec explicitly
-states: "# Introduction[^1] generates the identifier Introduction,
-not Introduction1"):
-
-```
-# Introduction[^1]
-
-[^1]: A note.
-.
-<section id="Introduction">
-<h1>Introduction<a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></h1>
-</section>
-<section role="doc-endnotes">
-<hr>
-<ol>
-<li id="fn1">
-<p>A note.<a href="#fnref1" role="doc-backlink">↩︎</a></p>
-</li>
-</ol>
-</section>
-```
-
-Different bullet markers create separate lists:
-
-```
-- [ ] foo
-+ [ ] bar
-* [ ] baz
-.
-<ul class="task-list">
-<li>
-<input disabled="" type="checkbox"/>
-foo
-</li>
-</ul>
-<ul class="task-list">
-<li>
-<input disabled="" type="checkbox"/>
-bar
-</li>
-</ul>
-<ul class="task-list">
-<li>
-<input disabled="" type="checkbox"/>
-baz
-</li>
-</ul>
-```
+plus regression tests for cdjot bugs and performance fixes. Cases that
+upstream has since adopted are covered by the upstream test files.
 
 Inline attributes on links: {key=val}, {.class}, {#id} after
 [text](url) should attach to the <a> element.
@@ -170,170 +95,6 @@ _emph_{#id .cls key=val}
 <p><em id="id" class="cls" key="val">emph</em></p>
 ```
 
-Tight/loose list detection must not look past the end of the list.
-A later loose list in the same document should not cause an earlier
-tight list to be rendered as loose.
-
-```
-- a
-- b
-
-text
-
-- x
-
-- y
-.
-<ul>
-<li>
-a
-</li>
-<li>
-b
-</li>
-</ul>
-<p>text</p>
-<ul>
-<li>
-<p>x</p>
-</li>
-<li>
-<p>y</p>
-</li>
-</ul>
-```
-
-Table separator rows must have no leading space after the opening |.
-`| --- | --- |` is not a separator because the first cell starts with
-a space. This matches djot.js behavior.
-
-```
-| a | b |
-| --- | --- |
-| c | d |
-.
-<table>
-<tr>
-<td>a</td>
-<td>b</td>
-</tr>
-<tr>
-<td>—</td>
-<td>—</td>
-</tr>
-<tr>
-<td>c</td>
-<td>d</td>
-</tr>
-</table>
-```
-
-No leading space: it IS a separator.
-
-```
-| a | b |
-|---|---|
-| c | d |
-.
-<table>
-<tr>
-<th>a</th>
-<th>b</th>
-</tr>
-<tr>
-<td>c</td>
-<td>d</td>
-</tr>
-</table>
-```
-
-Block attributes preceding a definition list should attach to
-the <dl>, not leak into the first <dd>'s content.
-
-```
-{variant=Simple}
-: term
-
-  definition
-.
-<dl variant="Simple">
-<dt>term</dt>
-<dd>
-<p>definition</p>
-</dd>
-</dl>
-```
-
-Multi-line {% ... %} block comments require continuation lines to
-be indented. Without indentation, it's a regular paragraph.
-
-```
-{%
-SPDX-FileCopyrightText: 2025
-%}
-
-Hello.
-.
-<p>{%
-SPDX-FileCopyrightText: 2025
-%}</p>
-<p>Hello.</p>
-```
-
-With indented continuation, it's a valid block comment.
-
-```
-{%
-  SPDX-FileCopyrightText: 2025
-  %}
-
-Hello.
-.
-<p>Hello.</p>
-```
-
-Reference links inside image alt text should be resolved to their
-label text, not emitted literally.
-
-```
-[foo]: http://example.com/foo
-
-![alt with [foo][] text](/img.png)
-.
-<p><img alt="alt with foo text" src="/img.png"></p>
-```
-
-```
-[foo]: http://example.com/foo
-
-![alt [foo][foo] here](/img.png)
-.
-<p><img alt="alt foo here" src="/img.png"></p>
-```
-
-Reference definition URLs may not contain internal whitespace
-(per spec: "None of the chunks of the URL may contain internal
-whitespace"). If the line has content after the URL, it is not a
-valid ref def and renders as a paragraph.
-
-```
-[foo]: http://example.com "title"
-
-[foo][]
-.
-<p>[foo]: http://example.com “title”</p>
-<p><a>foo</a></p>
-```
-
-```
-[foo]: http://example.com extra
-
-[foo][]
-.
-<p>[foo]: http://example.com extra</p>
-<p><a>foo</a></p>
-```
-
 An attribute block ahead of a reference definition applies to links
 that use it — all of it, id and class included, not just key=value
 pairs.
@@ -345,58 +106,6 @@ pairs.
 [foo][]
 .
 <p><a href="http://x" id="i" class="c" key="v">foo</a></p>
-```
-
-Indented continuation that starts with `-` must not be treated as a
-real sub-list. In djot, nested lists require a blank-line separator
-between parent and nested marker. Without a blank line, the indented
-text is literal continuation of the parent item, and a paragraph
-after the blank line following the list must not be absorbed as
-lazy continuation.
-
-```
-- a
-    - sub
-- b
-    - sub
-
-Para.
-.
-<ul>
-<li>
-a
-- sub
-</li>
-<li>
-b
-- sub
-</li>
-</ul>
-<p>Para.</p>
-```
-
-Backslash + newline produces a hard line break, even at end of
-paragraph (per spec: "backslash + newline" = <br>, unconditional).
-
-```
-para\
-.
-<p>para<br>
-</p>
-```
-
-Whitespace-only lines are blank lines (CommonMark convention, which
-djot inherits). A line containing only spaces must end the preceding
-block and separate from the next. (There is a single space on the
-line between the two paragraphs below.)
-
-```
-para
- 
-para2
-.
-<p>para</p>
-<p>para2</p>
 ```
 
 A footnote reference inside a list item must remain valid after the
@@ -436,68 +145,18 @@ Internally the empty URL must not be passed as a NULL source to memcpy.
 <p><a href="">link</a></p>
 ```
 
-A definition list with just a term marker and nothing else must not
-read past the end of the input buffer. Produces an empty term and
-empty definition.
-
-```
-:
-.
-<dl>
-<dt></dt>
-<dd>
-</dd>
-</dl>
-```
-
-A div whose content is only a whitespace line must not read past the
-end of the input buffer. Renders as an empty div.
-
-```
-:::
-
-:::
-.
-<div>
-</div>
-```
-
-A bare `#` continuation line is a heading marker with no inline
-content and contributes nothing to the heading's content (matching
-djot.js). The `# h` and `# x` lines join with a single newline; the
-empty `#` line in between is dropped.
-
-```
-# h
-#
-# x
-.
-<section id="h-x">
-<h1>h
-x</h1>
-</section>
-```
-
 Identifier and class names accept only ASCII alphanumerics, `_`, `:`,
 and `-` (matching the spec's rule for unquoted key=value values, and
 matching djot.js). Any other character invalidates the entire
 attribute spec, which then renders as literal text. This prevents
-characters like `"` and `<` from being smuggled into HTML attribute
-contexts.
+characters like `"` from being smuggled into HTML attribute contexts.
+(attributes.test covers the `<` case.)
 
 ```
 {.x"y}
 foo
 .
 <p>{.x”y}
-foo</p>
-```
-
-```
-{#a<b}
-foo
-.
-<p>{#a&lt;b}
 foo</p>
 ```
 
@@ -521,21 +180,6 @@ consumed. (For spans, the brackets go literal too — see spans.test.)
 [link](url){.x"y}
 .
 <p><a href="url">link</a>{.x”y}</p>
-```
-
-Empty `{}` after a span or link is valid (matching djot.js): the
-braces are consumed silently and no attrs are applied.
-
-```
-[text]{}
-.
-<p><span>text</span></p>
-```
-
-```
-[link](url){}
-.
-<p><a href="url">link</a></p>
 ```
 
 Regression: a run of `^` or `_` with no possible closer used to be
