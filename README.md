@@ -23,6 +23,6 @@ Similar in spirit to [smu](https://github.com/karlb/smu), but backed by a real s
 
 ## Test
 
-Passes 256 of 258 tests from the [djot.js](https://github.com/jgm/djot.js) suite (the remaining 2 test source-position and filter features that are outside the scope of a pure converter):
+Passes the [djot.js](https://github.com/jgm/djot.js) test suite, minus the files covering source positions, filters, and AST symbols — features outside the scope of a pure converter — plus cdjot's own regression tests:
 
     make test
