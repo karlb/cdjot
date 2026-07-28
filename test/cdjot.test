@@ -648,3 +648,23 @@ in links_and_images.test.)
 .
 <p><img alt="alt" src="/img/&lt;svg"></p>
 ```
+
+A bare `key` or an empty `key=` is not valid attribute syntax: the spec
+allows only `.class`, `#id`, `key=value`, `key="value"` and `%comment%`.
+An unparseable `{...}` makes the whole construct literal text, including
+the surrounding brackets (jgm/djot#399), so no attribute in the run is
+applied and a failed block attribute line starts a paragraph.
+
+```
+[x]{key}
+
+[y]{key=}
+
+{.a key}
+# not a heading
+.
+<p>[x]{key}</p>
+<p>[y]{key=}</p>
+<p>{.a key}
+# not a heading</p>
+```

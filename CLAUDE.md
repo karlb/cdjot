@@ -10,7 +10,7 @@ Single-file C99 djot-to-HTML converter. Reads stdin, writes stdout. No dependenc
 
 ```sh
 make            # build
-make test       # run test suite (326 tests)
+make test       # run test suite (327 tests)
 VERBOSE=1 sh test.sh          # show diff on failures
 VERBOSE=1 sh test.sh emphasis # run one category
 printf '# hi\n' | ./cdjot     # manual test
@@ -41,7 +41,7 @@ Key design decisions:
 ## Goals
 
 - Simplicity: single file, no deps, suckless-influenced style
-- Correctness: 326/326 tests passing
+- Correctness: 327/327 tests passing
 
 ## Tests
 

@@ -545,24 +545,24 @@ parse_attrs(const char *b, const char *e, char **outp)
 				p++;
 			}
 			name[kn] = '\0';
-			if (p < e && *p == '=') {
+			if (p >= e || *p != '=') goto fail; /* bare key */
+			p++;
+			if (p < e && *p == '"') {
 				p++;
-				if (p < e && *p == '"') {
+				while (p < e && *p != '"') {
+					if (*p == '\\' && p + 1 < e) p++;
+					if (*p) val[n++] = *p;
 					p++;
-					while (p < e && *p != '"') {
-						if (*p == '\\' && p + 1 < e) p++;
-						if (*p) val[n++] = *p;
-						p++;
-					}
-					if (p < e) p++;
-				} else {
-					/* unquoted values are restricted; quoted ones aren't */
-					while (p < e && *p != ' ' && *p != '}') {
-						if (!IS_NAME_CHAR(*p)) goto fail;
-						val[n++] = *p;
-						p++;
-					}
 				}
+				if (p < e) p++;
+			} else {
+				/* unquoted values are restricted; quoted ones aren't */
+				while (p < e && *p != ' ' && *p != '}') {
+					if (!IS_NAME_CHAR(*p)) goto fail;
+					val[n++] = *p;
+					p++;
+				}
+				if (n == 0) goto fail; /* key= with no value */
 			}
 			val[n] = '\0';
 			attr_put(&out, &cap, name, val, ATTR_SET);
