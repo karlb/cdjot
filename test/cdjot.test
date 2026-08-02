@@ -156,7 +156,7 @@ characters like `"` from being smuggled into HTML attribute contexts.
 {.x"y}
 foo
 .
-<p>{.x”y}
+<p>{.x“y}
 foo</p>
 ```
 
@@ -179,7 +179,43 @@ consumed. (For spans, the brackets go literal too — see spans.test.)
 ```
 [link](url){.x"y}
 .
-<p><a href="url">link</a>{.x”y}</p>
+<p><a href="url">link</a>{.x“y}</p>
+```
+
+Smart double quotes: djot.js puts no opener restriction on `"` -- any
+`"` may open -- and renders every unmatched one as a left quote, so an
+intra-word quote opens rather than closes. cdjot used to choose by
+looking at the neighbouring characters, which made this a right quote.
+
+```
+x"y
+.
+<p>x“y</p>
+```
+
+Quotes pair left to right, and a `"` following a completed pair opens
+a new one rather than closing the old:
+
+```
+a"b"c"d
+.
+<p>a“b”c“d</p>
+```
+
+Adjacent delimiters would enclose nothing, so they do not pair. Both
+fall back to the unmatched glyph, which is a left quote for `"` and a
+right quote for `'`:
+
+```
+""
+.
+<p>““</p>
+```
+
+```
+''
+.
+<p>’’</p>
 ```
 
 Regression: a run of `^` or `_` with no possible closer used to be

@@ -94,6 +94,11 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
+/* Pending unmatched `"` opener in the current process() run, or NULL.
+ * djot.js pairs double quotes with a left-to-right opener stack, so
+ * picking the glyph needs to know whether one is still open. */
+static const char *dq_open;
+
 /* Cache for doreplace's `{X` scan: a contiguous range [nc_b, nc_eol)
  * in which no `}` exists before the next `\n` or e. Without this, inputs
  * like `{{{{{...` are O(N^2) — every `{` scans to the next `\n`. */
@@ -3115,16 +3120,23 @@ doreplace(const char *b, const char *e, int n)
 			oputs("\xe2\x80\x99");
 			return 1;
 		}
+		/* djot.js puts no opener restriction on `"` (any one may open)
+		 * and renders every unmatched one as a left quote, so pairing
+		 * is a plain left-to-right walk: close when an opener is
+		 * pending and the span isn't empty, otherwise open. */
+		if (*b == '"') {
+			if (dq_open && !isws(before) && dq_open != b - 1) {
+				oputs("\xe2\x80\x9d");
+				dq_open = NULL;
+			} else {
+				if (!isws(after)) dq_open = b;
+				oputs("\xe2\x80\x9c");
+			}
+			return 1;
+		}
 		can_open = !isws(after) && (isws(before) || isasciipunct(before) || before == 0);
 		can_close = !isws(before) && (isws(after) || isasciipunct(after) || after == 0);
-		if (*b == '"') {
-			/* " after = is always opening (attribute value context) */
-			if (before == '=') {
-				oputs("\xe2\x80\x9c");
-				return 1;
-			}
-			oputs(can_open && !can_close ? "\xe2\x80\x9c" : "\xe2\x80\x9d");
-		} else if (can_close && !can_open) {
+		if (can_close && !can_open) {
 			oputs("\xe2\x80\x99");
 		} else if (can_open) {
 			/* look-ahead: simulate stack matching to check if this
@@ -3136,7 +3148,9 @@ doreplace(const char *b, const char *e, int n)
 					char qb = q[-1], qa = (q+1 < e) ? q[1] : 0;
 					int qo = !isws(qa) && (isws(qb) || isasciipunct(qb));
 					int qc = !isws(qb) && (isws(qa) || isasciipunct(qa) || qa == 0);
-					if (qc) { stack--; if (stack == 0) break; }
+					/* q == b+1 would be an empty span; djot.js
+					 * refuses those, leaving both unmatched */
+					if (qc && q > b + 1) { stack--; if (stack == 0) break; }
 					if (qo) stack++;
 				}
 			}
@@ -3178,6 +3192,7 @@ process(const char *b, const char *e, int newblock)
 {
 	const char *p;
 	const char *save_base = proc_base;
+	const char *save_dq_open = dq_open;
 	const char *save_nc_e = nc_e;
 	const char *save_nc_b = nc_b;
 	const char *save_nc_eol = nc_eol;
@@ -3189,6 +3204,7 @@ process(const char *b, const char *e, int newblock)
 	int allow_block = newblock;
 
 	proc_base = b;
+	dq_open = NULL;
 	nc_e = NULL;
 	nc_b = NULL;
 	nc_eol = NULL;
@@ -3312,6 +3328,7 @@ process(const char *b, const char *e, int newblock)
 			newblock = affected < 0;
 	}
 	proc_base = save_base;
+	dq_open = save_dq_open;
 	nc_e = save_nc_e;
 	nc_b = save_nc_b;
 	nc_eol = save_nc_eol;
