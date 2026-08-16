@@ -301,17 +301,19 @@ skip_blanks(const char *p, const char *e)
 	return p;
 }
 
-/* Normalize a reference label for comparison: drop _ and *, collapse
- * whitespace runs to a single space, trim leading/trailing whitespace.
+/* Normalize a label for comparison: collapse whitespace runs to a single
+ * space and trim leading/trailing whitespace. With dropemph, also drop _
+ * and *, so a link reference matches a definition through its emphasis
+ * markers; footnote labels are raw text and pass dropemph=0.
  * Output buffer must hold at least `len` bytes; the result is never
  * longer than the input. Returns the number of bytes written. */
 static int
-normalize_label(const char *s, int len, char *out)
+normalize_label(const char *s, int len, char *out, int dropemph)
 {
 	int i, o = 0, last_was_ws = 1;
 	for (i = 0; i < len; i++) {
 		unsigned char c = (unsigned char)s[i];
-		if (c == '_' || c == '*') continue;
+		if (dropemph && (c == '_' || c == '*')) continue;
 		if (isws(c)) {
 			if (!last_was_ws) {
 				out[o++] = ' ';
@@ -336,7 +338,7 @@ findref(const char *label, int len, const char **url, int *urllen)
 		if (!heap) return 0;
 		buf = heap;
 	}
-	nlen = normalize_label(label, len, buf);
+	nlen = normalize_label(label, len, buf, 1);
 	for (i = 0; i < nrefs; i++)
 		if (refs[i].normlen == nlen
 		    && !memcmp(refs[i].norm, buf, nlen)) {
@@ -359,7 +361,7 @@ findref_range(const char *label, int len, int lo, int hi)
 		if (!heap) return 0;
 		buf = heap;
 	}
-	nlen = normalize_label(label, len, buf);
+	nlen = normalize_label(label, len, buf, 1);
 	for (i = lo; i < hi; i++)
 		if (refs[i].normlen == nlen
 		    && !memcmp(refs[i].norm, buf, nlen)) {
@@ -2794,53 +2796,6 @@ dolink(const char *b, const char *e, int n)
 	if (*p == '!' && p + 1 < e && p[1] == '[') { img = 1; p++; }
 	if (*p != '[') return 0;
 
-	/* footnote reference [^label] */
-	if (!img && p + 1 < e && p[1] == '^') {
-		const char *fl = p + 2;
-		const char *fe = fl;
-		while (fe < e && *fe != ']' && *fe != '\n') fe++;
-		if (fe < e && *fe == ']') {
-			int fi, found = -1;
-			for (fi = 0; fi < nfootnotes; fi++) {
-				if (footnotes[fi].labellen == (int)(fe - fl)
-				    && !memcmp(footnotes[fi].label, fl, fe - fl)) {
-					found = fi;
-					break;
-				}
-			}
-			/* if not found, create an empty footnote entry */
-			if (found < 0) {
-				int ll = fe - fl;
-				char *lcpy = malloc(ll);
-				if (!lcpy) die("malloc");
-				memcpy(lcpy, fl, ll);
-				GROWA(footnotes, nfootnotes, cap_fn);
-				found = nfootnotes;
-				footnotes[found].label = lcpy;
-				footnotes[found].labellen = ll;
-				footnotes[found].content = NULL;
-				footnotes[found].contentlen = 0;
-				footnotes[found].used = 0;
-				footnotes[found].num = 0;
-				nfootnotes++;
-			}
-			if (found >= 0) {
-				int first = !footnotes[found].num;
-				footnotes[found].used = 1;
-				if (first)
-					footnotes[found].num = ++footnote_counter;
-				int num = footnotes[found].num;
-				if (first)
-					oprintf("<a id=\"fnref%d\" href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
-					    num, num, num);
-				else
-					oprintf("<a href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
-					    num, num);
-				return fe + 1 - b;
-			}
-		}
-	}
-
 	/* Find matching `]` via the precomputed bracket-match table. Without
 	 * this, inputs with many unmatched `[` (e.g. `[[[[...[](`) cause an
 	 * O(N) depth walk per `[`, total O(N^2). */
@@ -2853,6 +2808,51 @@ dolink(const char *b, const char *e, int n)
 		if (mi < 0) return 0;
 		q = proc_base + mi;
 	}
+
+	/* footnote reference [^label]. The label may span lines and is
+	 * whitespace-normalized, like a reference label; the definition
+	 * side normalizes too, so the two meet in the middle. */
+	if (!img && p + 1 < e && p[1] == '^') {
+		const char *fl = p + 2;
+		int ll = q - fl, fi, found = -1, first, num;
+		char *lcpy = malloc(ll + 1);
+		if (!lcpy) die("malloc");
+		ll = normalize_label(fl, ll, lcpy, 0);
+		for (fi = 0; fi < nfootnotes; fi++) {
+			if (footnotes[fi].labellen == ll
+			    && !memcmp(footnotes[fi].label, lcpy, ll)) {
+				found = fi;
+				break;
+			}
+		}
+		/* if not found, create an empty footnote entry */
+		if (found < 0) {
+			GROWA(footnotes, nfootnotes, cap_fn);
+			found = nfootnotes;
+			footnotes[found].label = lcpy;
+			footnotes[found].labellen = ll;
+			footnotes[found].content = NULL;
+			footnotes[found].contentlen = 0;
+			footnotes[found].used = 0;
+			footnotes[found].num = 0;
+			nfootnotes++;
+		} else {
+			free(lcpy);
+		}
+		first = !footnotes[found].num;
+		footnotes[found].used = 1;
+		if (first)
+			footnotes[found].num = ++footnote_counter;
+		num = footnotes[found].num;
+		if (first)
+			oprintf("<a id=\"fnref%d\" href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
+			    num, num, num);
+		else
+			oprintf("<a href=\"#fn%d\" role=\"doc-noteref\"><sup>%d</sup></a>",
+			    num, num);
+		return q + 1 - b;
+	}
+
 	text = p + 1;
 	textend = q;
 	q++; /* past ] */
@@ -3411,7 +3411,7 @@ prescan(const char *b, const char *e)
 				if (ll > 0) {
 					char *lcpy = malloc(ll);
 					if (!lcpy) die("malloc");
-					memcpy(lcpy, fl, ll);
+					ll = normalize_label(fl, ll, lcpy, 0);
 					GROWA(footnotes, nfootnotes, cap_fn);
 					footnotes[nfootnotes].label = lcpy;
 					footnotes[nfootnotes].labellen = ll;
@@ -3482,7 +3482,7 @@ prescan(const char *b, const char *e)
 						char *nbuf = malloc(labellen);
 						if (!nbuf) die("malloc");
 						refs[nrefs].normlen =
-						    normalize_label(label, labellen, nbuf);
+						    normalize_label(label, labellen, nbuf, 1);
 						refs[nrefs].norm = nbuf;
 						refs[nrefs].url = u;
 						refs[nrefs].urllen = urlbuflen;
@@ -3557,7 +3557,7 @@ prescan(const char *b, const char *e)
 					char *nbuf = malloc(hdefs[hi].len);
 					if (!nbuf) die("malloc");
 					refs[nrefs].normlen = normalize_label(
-					    hdefs[hi].content, hdefs[hi].len, nbuf);
+					    hdefs[hi].content, hdefs[hi].len, nbuf, 1);
 					refs[nrefs].norm = nbuf;
 					refs[nrefs].url = u;
 					refs[nrefs].urllen = ulen;
@@ -3649,9 +3649,15 @@ emit_endnotes(void)
 						in_container = save_cont;
 					}
 				} else {
+					/* content is indented relative to the
+					 * definition; the leading run is layout,
+					 * not text */
+					while (fcl > 0 && (*fc == ' ' || *fc == '\t')) {
+						fc++;
+						fcl--;
+					}
 					oputs("<p>");
-					process(footnotes[i].content,
-					    footnotes[i].content + footnotes[i].contentlen, 0);
+					process(fc, fc + fcl, 0);
 					oprintf("<a href=\"#fnref%d\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>", num);
 					oputs("</p>\n");
 				}
