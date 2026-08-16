@@ -134,6 +134,27 @@ then [^a]
 </section>
 ```
 
+Footnote labels are whitespace-normalized on both sides, so a definition
+written with a wider gap still matches the reference. footnotes.test
+covers the reference side (a label spanning lines); this is the
+definition side.
+
+```
+[^a b]
+
+[^a  b]: foo
+.
+<p><a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></p>
+<section role="doc-endnotes">
+<hr>
+<ol>
+<li id="fn1">
+<p>foo<a href="#fnref1" role="doc-backlink">↩︎</a></p>
+</li>
+</ol>
+</section>
+```
+
 A reference definition with no URL produces a link with an empty href.
 Internally the empty URL must not be passed as a NULL source to memcpy.
 
@@ -218,9 +239,15 @@ right quote for `'`:
 <p>’’</p>
 ```
 
-Regression: a run of `^` or `_` with no possible closer used to be
-O(N^3) — each call to dosurround re-scanned the whole run via an
-all-delim walk. Locks the literal-emit fall-through.
+The blocks below came out of fixing quadratic scans. They assert output,
+not running time -- a reintroduced O(N^2) would pass every one of them
+-- so what they actually lock is the behaviour each fast path has to
+preserve: a cache or short-circuit must not change what gets emitted.
+The complexity notes record why the code is shaped the way it is.
+
+A run of `^` or `_` with no possible closer falls through to a literal
+emit. dosurround used to re-scan the whole run via an all-delim walk on
+every call, O(N^3).
 
 ```
 ^^^^^^^^^^
@@ -240,9 +267,9 @@ ___xyz
 <p>___xyz</p>
 ```
 
-Regression: consecutive indented `[label]:` lines used to make prescan
-re-walk continuations on each iteration (O(N^2)) and merged sibling
-refdefs into one URL. Each line should register its own ref.
+Consecutive indented `[label]:` lines each register their own ref.
+prescan used to re-walk continuations on every iteration, O(N^2), and
+merged sibling refdefs into one URL.
 
 ```
   [a]: http://aa
@@ -252,9 +279,9 @@ refdefs into one URL. Each line should register its own ref.
 <p><a href="http://bb">link</a></p>
 ```
 
-Regression: a paragraph full of `[^foo` (unmatched footnote refs) used
-to make dolink and dosurround walk to e on every `[`, O(N^2). The
-short-circuit cache makes this linear; output is unchanged.
+An unmatched `[^foo` stays literal, with the `^` still free to open a
+superscript. dolink and dosurround used to walk to e on every `[`,
+O(N^2); dolink now takes the match from the bracket-match table.
 
 ```
 [^x
@@ -264,9 +291,9 @@ short-circuit cache makes this linear; output is unchanged.
 [</sup>y</p>
 ```
 
-Regression: a long run of `{` with no closing `}` used to make
-doparagraph's brace pre-process re-scan to e on every `{` — O(N^2).
-The no_close_after cache makes this linear; output is unchanged.
+A run of `{` with no closing `}` stays literal. doparagraph's brace
+pre-process used to re-scan to e on every `{`, O(N^2); the
+no_close_after cache makes it linear.
 
 ```
 {{{{{{{{{{
@@ -274,9 +301,9 @@ The no_close_after cache makes this linear; output is unchanged.
 <p>{{{{{{{{{{</p>
 ```
 
-Regression: many `{X` (X non-alpha, no closing `}`) used to make
-doreplace re-scan to the next `\n` on every `{` — O(N^2). The
-nc_b/nc_eol cache makes this linear; output is unchanged.
+`{X` with X non-alpha and no closing `}` stays literal. doreplace used
+to re-scan to the next `\n` on every `{`, O(N^2); the nc_b/nc_eol cache
+makes it linear.
 
 ```
 {1 {1 {1 {1 {1 {1 {1
@@ -284,9 +311,9 @@ nc_b/nc_eol cache makes this linear; output is unchanged.
 <p>{1 {1 {1 {1 {1 {1 {1</p>
 ```
 
-Regression: a long whitespace run with no following `\` used to make
-doreplace's hard-break check forward-walk on every space — O(N^2).
-The b[-1]-is-ws skip makes this linear; output is unchanged.
+A whitespace run with no following `\` is emitted verbatim rather than
+becoming a break. doreplace's hard-break check used to forward-walk on
+every space, O(N^2); the b[-1]-is-ws skip makes it linear.
 
 ```
 a                                                  b
@@ -294,9 +321,9 @@ a                                                  b
 <p>a                                                  b</p>
 ```
 
-Regression: a footnote whose content has many blank lines used to make
-emit_endnotes re-scan via skip_blanks per blank line — O(N^2). Output
-shape is unchanged.
+A footnote whose content has blank lines keeps its paragraph split, with
+the backlink in the last paragraph. emit_endnotes used to re-scan via
+skip_blanks per blank line, O(N^2).
 
 ```
 [^a]
@@ -318,15 +345,42 @@ shape is unchanged.
 </section>
 ```
 
-URL safety: a literal `<` in an image destination must be HTML-escaped
-in the emitted src so it can't break out of the attribute. Found via
-fuzz/proptest attrsafe on AFL-mutated URLs. (The link equivalents are
-in links_and_images.test.)
+URL safety: a literal `<` or `&` in a destination must be HTML-escaped
+in the emitted href/src so it can't break out of the attribute. Found
+via fuzz/proptest attrsafe on AFL-mutated URLs. Inline links reach the
+shared emitter on a path the upstream tests already pin; the inline
+image, the two reference paths, and the autolink each call it from
+their own site, so pin those.
 
 ```
 ![alt](/img/<svg)
 .
 <p><img alt="alt" src="/img/&lt;svg"></p>
+```
+
+```
+[link][r]
+
+[r]: /x?a=1&b=2<z
+.
+<p><a href="/x?a=1&amp;b=2&lt;z">link</a></p>
+```
+
+```
+![alt][r]
+
+[r]: /x?a=1&b=2<z
+.
+<p><img alt="alt" src="/x?a=1&amp;b=2&lt;z"></p>
+```
+
+An autolink cannot contain a literal `<` -- that would end it -- but an
+`&` must still be escaped, in the href and in the link text alike:
+
+```
+<https://x.com/?a=1&b=2>
+.
+<p><a href="https://x.com/?a=1&amp;b=2">https://x.com/?a=1&amp;b=2</a></p>
 ```
 
 A bare `key` or an empty `key=` is not valid attribute syntax: the spec
