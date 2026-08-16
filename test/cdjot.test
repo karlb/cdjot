@@ -17,6 +17,17 @@ Inline attributes on links: {key=val}, {.class}, {#id} after
 <p><a href="b" class="cls" id="id">a</a></p>
 ```
 
+A quoted value may contain `}`. dolink scans for the closing brace
+itself rather than calling parse_attrs to find it, so that scan has to
+skip quoted runs; ending it at the first `}` truncates the value and
+leaves the rest as text.
+
+```
+[a](b){k="}"}
+.
+<p><a href="b" k="}">a</a></p>
+```
+
 Attributes are emitted in declaration order, and a repeated name keeps
 its original position while taking the later value. Only classes
 accumulate; a second id replaces the first rather than joining it.
@@ -258,10 +269,16 @@ skip_blanks per blank line, O(N^2).
 
 URL safety: a literal `<` or `&` in a destination must be HTML-escaped
 in the emitted href/src so it can't break out of the attribute. Found
-via fuzz/proptest attrsafe on AFL-mutated URLs. Inline links reach the
-shared emitter on a path the upstream tests already pin; the inline
-image, the two reference paths, and the autolink each call it from
-their own site, so pin those.
+via fuzz/proptest attrsafe on AFL-mutated URLs. The inline link, the
+inline image, the two reference paths, and the autolink each call the
+shared emitter from their own site, and an emitter that skips the
+escaping passes every upstream file at all five, so pin each one.
+
+```
+[link](/x?a=1&b=2<z)
+.
+<p><a href="/x?a=1&amp;b=2&lt;z">link</a></p>
+```
 
 ```
 ![alt](/img/<svg)
