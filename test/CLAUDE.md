@@ -58,13 +58,14 @@ freezes a behaviour that may be a bug. Open divergences belong in
 `cdjot.test` with the issue number in the prose, so they fail loudly if
 someone "fixes" them (see the heading-attribute case, jgm/djot.js#144).
 
-## Proving a case is redundant
+## Deciding a case is redundant
 
-Before deleting anything as "already covered upstream", **prove it by
-mutation**. A case is redundant only if every mutant it kills is also
-killed by the upstream files alone.
+Open the upstream case and check that it asserts the same behaviour on
+the same construct. That is the bar. It is a judgment call, and the cost
+of getting it wrong is a regression that corpus comparison and the
+proptests are likely to catch anyway — so make the call and move on.
 
-Two cheaper signals both give wrong answers here, and have:
+Read the case, though. Two shortcuts look like evidence and aren't:
 
 - **Grepping for the construct.** `){` appears in `attributes.test` and
   `links_and_images.test`, but those cases are `[link](url){}` (empty
@@ -76,6 +77,12 @@ Two cheaper signals both give wrong answers here, and have:
   caught by *none* of the upstream files. The lines run; the outcome
   isn't asserted.
 
-The same rule applies to a case you are about to add: build the mutant
-it is supposed to catch and confirm the suite misses it without the
-case and catches it with. If nothing distinguishes it, don't add it.
+Mutation testing is the tie-breaker for a close call, not a gate — and
+it only cuts one way. A mutant that this case alone kills proves the
+case is **needed**. Finding no such mutant proves nothing: a sweep of
+420 operator mutants rated the autolink escaping case redundant, while a
+mutant it alone catches was already known. Reach for it to justify
+keeping something, not to license deleting it.
+
+Same standard for a case you're about to add: if you can't say what it
+would catch that the rest of the suite wouldn't, don't add it.
