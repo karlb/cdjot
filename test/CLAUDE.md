@@ -77,6 +77,22 @@ Read the case, though. Two shortcuts look like evidence and aren't:
   caught by *none* of the upstream files. The lines run; the outcome
   isn't asserted.
 
+Reading the case is necessary and still not sufficient. `smart.test:71`
+and `:199` both assert that an unmatched `"` is a left quote — the same
+sentence as the `x"y` case here — and pre-fix cdjot passes both, because
+both sit at a word boundary where the old rule already opened correctly.
+Asserting the same sentence is not discriminating the same failure.
+
+So when a case exists because of a cdjot bug that got fixed, check the
+fix. `git show 1028f9e^:cdjot.c > /tmp/old.c`, build it, run it against
+the upstream files: if it passes them, they do not cover this case and
+it stays. Build the old version, never reconstruct it — a hand-written
+mutant of that bug broke eight upstream cases the real one never
+touched, and that strawman is what made deleting `x"y` look safe.
+
+This only works where history has the buggy version. A case that never
+had a corresponding bug still rests on reading.
+
 Mutation testing is the tie-breaker for a close call, not a gate — and
 it only cuts one way. A mutant that this case alone kills proves the
 case is **needed**. Finding no such mutant proves nothing: a sweep of
