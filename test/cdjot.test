@@ -372,3 +372,18 @@ written explicitly.
 </div>
 </section>
 ```
+
+That rule holds whether the id is auto-generated or written out. djot.js
+agrees on the auto-generated case above, but moves the whole attribute
+set onto the <section> when the id is explicit, leaving the heading bare
+-- so this one case diverges. djot-php matches cdjot. Which behaviour is
+right is open upstream as jgm/djot.js#144.
+
+```
+{a=b .c #x}
+# abc
+.
+<section id="x">
+<h1 a="b" class="c">abc</h1>
+</section>
+```
