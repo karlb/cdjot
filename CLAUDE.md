@@ -45,9 +45,10 @@ Key design decisions:
 
 ## Tests
 
-- `test/*.test` — upstream tests from `jgm/djot.js`. Format: backtick-fenced blocks with `.` separating input from expected HTML
-- `test/cdjot.test` — cdjot-specific tests for bugs found via corpus comparison (not upstream)
-- Upstream test files are copied verbatim — no local edits. Omitted: symb.test, filters.test, sourcepos.test (N/A for HTML-only converter). AST-format blocks (fences with an info string, ` ``` a `) have no HTML to compare and are skipped by the runner
+- `test/*.test` — upstream tests from `jgm/djot.js`, copied verbatim. Format: backtick-fenced blocks with `.` separating input from expected HTML
+- `test/cdjot.test` — cases upstream does not have and should not have
+
+See `test/CLAUDE.md` before editing tests: which file a case belongs in, and how to prove one is redundant before deleting it.
 
 ## Corpus comparison
 
