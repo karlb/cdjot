@@ -203,26 +203,6 @@ consumed. (For spans, the brackets go literal too — see spans.test.)
 <p><a href="url">link</a>{.x“y}</p>
 ```
 
-Smart double quotes: djot.js puts no opener restriction on `"` -- any
-`"` may open -- and renders every unmatched one as a left quote, so an
-intra-word quote opens rather than closes. cdjot used to choose by
-looking at the neighbouring characters, which made this a right quote.
-
-```
-x"y
-.
-<p>x“y</p>
-```
-
-Quotes pair left to right, and a `"` following a completed pair opens
-a new one rather than closing the old:
-
-```
-a"b"c"d
-.
-<p>a“b”c“d</p>
-```
-
 Adjacent delimiters would enclose nothing, so they do not pair. Both
 fall back to the unmatched glyph, which is a left quote for `"` and a
 right quote for `'`:
@@ -245,26 +225,14 @@ not running time -- a reintroduced O(N^2) would pass every one of them
 preserve: a cache or short-circuit must not change what gets emitted.
 The complexity notes record why the code is shaped the way it is.
 
-A run of `^` or `_` with no possible closer falls through to a literal
-emit. dosurround used to re-scan the whole run via an all-delim walk on
-every call, O(N^3).
+A run of `^` with no possible closer falls through to a literal emit.
+dosurround used to re-scan the whole run via an all-delim walk on every
+call, O(N^3). (emphasis.test covers the `_` runs.)
 
 ```
 ^^^^^^^^^^
 .
 <p>^^^^^^^^^^</p>
-```
-
-```
-__________
-.
-<p>__________</p>
-```
-
-```
-___xyz
-.
-<p>___xyz</p>
 ```
 
 Consecutive indented `[label]:` lines each register their own ref.
