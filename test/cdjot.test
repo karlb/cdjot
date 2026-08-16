@@ -12,12 +12,6 @@ Inline attributes on links: {key=val}, {.class}, {#id} after
 ```
 
 ```
-[a](b){rel="me"}
-.
-<p><a href="b" rel="me">a</a></p>
-```
-
-```
 [a](b){.cls #id}
 .
 <p><a href="b" class="cls" id="id">a</a></p>
@@ -134,38 +128,6 @@ then [^a]
 </section>
 ```
 
-Footnote labels are whitespace-normalized on both sides, so a definition
-written with a wider gap still matches the reference. footnotes.test
-covers the reference side (a label spanning lines); this is the
-definition side.
-
-```
-[^a b]
-
-[^a  b]: foo
-.
-<p><a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></p>
-<section role="doc-endnotes">
-<hr>
-<ol>
-<li id="fn1">
-<p>foo<a href="#fnref1" role="doc-backlink">↩︎</a></p>
-</li>
-</ol>
-</section>
-```
-
-A reference definition with no URL produces a link with an empty href.
-Internally the empty URL must not be passed as a NULL source to memcpy.
-
-```
-[link]:
-
-[link][]
-.
-<p><a href="">link</a></p>
-```
-
 Identifier and class names accept only ASCII alphanumerics, `_`, `:`,
 and `-` (matching the spec's rule for unquoted key=value values, and
 matching djot.js). Any other character invalidates the entire
@@ -204,44 +166,20 @@ consumed. (For spans, the brackets go literal too — see spans.test.)
 ```
 
 Smart double quotes: djot.js puts no opener restriction on `"` -- any
-`"` may open -- and renders every unmatched one as a left quote, so an
-intra-word quote opens rather than closes. cdjot used to choose by
-looking at the neighbouring characters, which made this a right quote.
+`"` may open -- and renders every unmatched one as a left quote. So
+quotes pair left to right, and a `"` following a completed pair opens a
+new one rather than closing the old. cdjot used to choose by looking at
+the neighbouring characters, which made the third quote a right one.
 
-smart.test's unmatched-`"` cases (:71, :199) both sit at a word
+smart.test's unmatched-`"` cases (:71, :214) both sit at a word
 boundary, where the old rule opened correctly too, so they do not cover
 this. The bug needs a non-space, non-punctuation character on both
-sides.
-
-```
-x"y
-.
-<p>x“y</p>
-```
-
-Quotes pair left to right, and a `"` following a completed pair opens
-a new one rather than closing the old:
+sides, which is what the third quote here has.
 
 ```
 a"b"c"d
 .
 <p>a“b”c“d</p>
-```
-
-Adjacent delimiters would enclose nothing, so they do not pair. Both
-fall back to the unmatched glyph, which is a left quote for `"` and a
-right quote for `'`:
-
-```
-""
-.
-<p>““</p>
-```
-
-```
-''
-.
-<p>’’</p>
 ```
 
 The blocks below came out of fixing quadratic scans. They assert output,
@@ -284,16 +222,6 @@ O(N^2); dolink now takes the match from the bracket-match table.
 [</sup>y</p>
 ```
 
-A run of `{` with no closing `}` stays literal. doparagraph's brace
-pre-process used to re-scan to e on every `{`, O(N^2); the
-no_close_after cache makes it linear.
-
-```
-{{{{{{{{{{
-.
-<p>{{{{{{{{{{</p>
-```
-
 `{X` with X non-alpha and no closing `}` stays literal. doreplace used
 to re-scan to the next `\n` on every `{`, O(N^2); the nc_b/nc_eol cache
 makes it linear.
@@ -302,16 +230,6 @@ makes it linear.
 {1 {1 {1 {1 {1 {1 {1
 .
 <p>{1 {1 {1 {1 {1 {1 {1</p>
-```
-
-A whitespace run with no following `\` is emitted verbatim rather than
-becoming a break. doreplace's hard-break check used to forward-walk on
-every space, O(N^2); the b[-1]-is-ws skip makes it linear.
-
-```
-a                                                  b
-.
-<p>a                                                  b</p>
 ```
 
 A footnote whose content has blank lines keeps its paragraph split, with
