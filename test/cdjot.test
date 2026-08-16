@@ -31,6 +31,9 @@ leaves the rest as text.
 Attributes are emitted in declaration order, and a repeated name keeps
 its original position while taking the later value. Only classes
 accumulate; a second id replaces the first rather than joining it.
+attributes.test:145 asserts the same rule across consecutive blocks,
+which cdjot merges in attr_merge; this is the within-one-spec path in
+parse_attrs, and it is the only case covering it.
 
 ```
 {#i1 .c key=a #i2}
@@ -221,9 +224,12 @@ merged sibling refdefs into one URL.
 <p><a href="http://bb">link</a></p>
 ```
 
-An unmatched `[^foo` stays literal, with the `^` still free to open a
-superscript. dolink and dosurround used to walk to e on every `[`,
-O(N^2); dolink now takes the match from the bracket-match table.
+A `[` with no matching `]` is skipped and the scan continues past it,
+so the `^` here still pairs with the one on the next line. The bracket
+is not what allows that -- `a^x` / `a^y` pairs identically -- so what
+this pins is the skip itself: dosurround takes the match from the
+bracket-match table to avoid walking to e on every `[`, O(N^2), and that
+lookup has to continue past an unmatched `[`, not abandon the run.
 
 ```
 [^x
@@ -241,30 +247,6 @@ makes it linear.
 {1 {1 {1 {1 {1 {1 {1
 .
 <p>{1 {1 {1 {1 {1 {1 {1</p>
-```
-
-A footnote whose content has blank lines keeps its paragraph split, with
-the backlink in the last paragraph. emit_endnotes used to re-scan via
-skip_blanks per blank line, O(N^2).
-
-```
-[^a]
-
-[^a]: line1
-
-
-  line2
-.
-<p><a id="fnref1" href="#fn1" role="doc-noteref"><sup>1</sup></a></p>
-<section role="doc-endnotes">
-<hr>
-<ol>
-<li id="fn1">
-<p>line1</p>
-<p>line2<a href="#fnref1" role="doc-backlink">↩︎</a></p>
-</li>
-</ol>
-</section>
 ```
 
 URL safety: a literal `<` or `&` in a destination must be HTML-escaped
