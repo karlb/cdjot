@@ -180,9 +180,9 @@ consumed. (For spans, the brackets go literal too — see spans.test.)
 ```
 
 Smart double quotes: djot.js puts no opener restriction on `"` -- any
-`"` may open -- and renders every unmatched one as a left quote. So
-quotes pair left to right, and a `"` following a completed pair opens a
-new one rather than closing the old. cdjot used to choose by looking at
+`"` may open -- and renders every unmatched one as a left quote. A
+closer takes the nearest pending opener, so a `"` after a completed pair
+opens rather than closing anything. cdjot used to choose by looking at
 the neighbouring characters, which made the third quote a right one.
 
 smart.test's unmatched-`"` cases (:71, :214) both sit at a word
@@ -194,6 +194,22 @@ sides, which is what the third quote here has.
 a"b"c"d
 .
 <p>a“b”c“d</p>
+```
+
+Nesting needs the whole stack, not just the nearest opener. The inner
+`"` here has a space before it so it cannot close, and opens a second
+pair; the last `"` then has to reach past it to the first. cdjot kept
+one opener in a single pointer, which the inner quote overwrote, leaving
+the last one with nothing to close -- and no case above catches that,
+because both of them leave at most one opener pending. smart.test:50
+pins the same rule for `'` (`'tis the season to be 'jolly'`), which is
+why `'` was never affected; upstream has no `"` equivalent, so this is
+an upstream candidate too.
+
+```
+"a "b" c"
+.
+<p>“a “b” c”</p>
 ```
 
 The blocks below came out of fixing quadratic scans. They assert output,

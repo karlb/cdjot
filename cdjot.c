@@ -94,10 +94,16 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
-/* Pending unmatched `"` opener in the current process() run, or NULL.
- * djot.js pairs double quotes with a left-to-right opener stack, so
- * picking the glyph needs to know whether one is still open. */
-static const char *dq_open;
+/* Pending unmatched `"` openers in the current process() run, innermost
+ * last. djot.js pairs double quotes with an opener stack and a closer
+ * takes the nearest one, so a single pointer would lose the outer quote
+ * of a nested pair: in `"a "b" c"` the second `"` cannot close (space
+ * before it) and opens instead, and the last one has to find the first
+ * still waiting. dq_base is the floor for the current process() run:
+ * entries below it belong to an outer run and must not be popped or
+ * overwritten. The allocation is reused across runs. */
+static const char **dq_open;
+static int dq_n, dq_base, dq_cap;
 
 /* Cache for doreplace's `{X` scan: a contiguous range [nc_b, nc_eol)
  * in which no `}` exists before the next `\n` or e. Without this, inputs
@@ -3121,15 +3127,21 @@ doreplace(const char *b, const char *e, int n)
 			return 1;
 		}
 		/* djot.js puts no opener restriction on `"` (any one may open)
-		 * and renders every unmatched one as a left quote, so pairing
-		 * is a plain left-to-right walk: close when an opener is
-		 * pending and the span isn't empty, otherwise open. */
+		 * and renders every unmatched one as a left quote. A closer
+		 * takes the nearest pending opener, so this pops the stack
+		 * when one is pending and the span isn't empty, and otherwise
+		 * pushes. Whitespace before rules out closing, which is what
+		 * makes the inner quote of `"a "b" c"` open instead. */
 		if (*b == '"') {
-			if (dq_open && !isws(before) && dq_open != b - 1) {
+			if (dq_n > dq_base && !isws(before)
+			    && dq_open[dq_n - 1] != b - 1) {
 				oputs("\xe2\x80\x9d");
-				dq_open = NULL;
+				dq_n--;
 			} else {
-				if (!isws(after)) dq_open = b;
+				if (!isws(after)) {
+					GROWA(dq_open, dq_n, dq_cap);
+					dq_open[dq_n++] = b;
+				}
 				oputs("\xe2\x80\x9c");
 			}
 			return 1;
@@ -3192,7 +3204,7 @@ process(const char *b, const char *e, int newblock)
 {
 	const char *p;
 	const char *save_base = proc_base;
-	const char *save_dq_open = dq_open;
+	int save_dq_base = dq_base;
 	const char *save_nc_e = nc_e;
 	const char *save_nc_b = nc_b;
 	const char *save_nc_eol = nc_eol;
@@ -3204,7 +3216,7 @@ process(const char *b, const char *e, int newblock)
 	int allow_block = newblock;
 
 	proc_base = b;
-	dq_open = NULL;
+	dq_base = dq_n;
 	nc_e = NULL;
 	nc_b = NULL;
 	nc_eol = NULL;
@@ -3221,6 +3233,9 @@ process(const char *b, const char *e, int newblock)
 				had_blank = 1;
 				p = le;
 				if (p >= e) {
+					proc_base = save_base;
+					dq_n = dq_base;
+					dq_base = save_dq_base;
 					nc_e = save_nc_e;
 					nc_b = save_nc_b;
 					nc_eol = save_nc_eol;
@@ -3328,7 +3343,8 @@ process(const char *b, const char *e, int newblock)
 			newblock = affected < 0;
 	}
 	proc_base = save_base;
-	dq_open = save_dq_open;
+	dq_n = dq_base;
+	dq_base = save_dq_base;
 	nc_e = save_nc_e;
 	nc_b = save_nc_b;
 	nc_eol = save_nc_eol;
