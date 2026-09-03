@@ -58,6 +58,12 @@ freezes a behaviour that may be a bug. Open divergences belong in
 `cdjot.test` with the issue number in the prose, so they fail loudly if
 someone "fixes" them (see the heading-attribute case, jgm/djot.js#144).
 
+That is for divergences upstream has not settled. Where the spec does
+settle it and cdjot is the wrong one, do the opposite: no case. Pinning
+our output would assert a known bug and fail the day someone repairs
+it. Record it at the code instead (see the cross-kind note on
+`dosurround`'s scan, for `*a _b *c_ d*`).
+
 ## Deciding a case is redundant
 
 Open the upstream case and check that it asserts the same behaviour on

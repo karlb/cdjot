@@ -2538,7 +2538,20 @@ dosurround(const char *b, const char *e, int n)
 
 	/* find matching close (single delimiter)
 	 * Track inner openers so the closest opener wins when
-	 * multiple openers compete for the same closer. */
+	 * multiple openers compete for the same closer.
+	 *
+	 * Known divergence, shared with doquote: this counts openers of
+	 * `ch` only, so an inner opener that a pair of a *different* kind
+	 * has already cleared still claims our closer. syntax.md's
+	 * precedence rule says it should not -- in `*a _b *c_ d*` the `_`
+	 * pair closes first, which clears the inner `*`, and djot.js
+	 * pairs the outer `*`s. Skipping nested pairs is not a fix: in
+	 * `_a *b_ c*` the `*` pair must NOT be skipped, and telling the
+	 * two apart needs to know which pair closes first, which is
+	 * global left-to-right information this per-delimiter scan does
+	 * not have. Getting it right means one pass over all delimiter
+	 * kinds recording matches, then emitting -- djot.js's shape, not
+	 * this one. No corpus file is affected. */
 	start = b + 1 + consumed_open;
 	{
 	int inner_openers = 0;
@@ -3062,7 +3075,8 @@ doautolink(const char *b, const char *e, int n)
  * nearest opener claims, then recurse on the interior. That recursion
  * is what keeps the `_`s in `"_"_` from pairing across the closing
  * quote. An unmatched quote falls back to its default glyph, left for
- * `"` and right for `'`. */
+ * `"` and right for `'`. Shares dosurround's cross-kind limitation;
+ * see the note on its scan. */
 static int
 doquote(const char *b, const char *e, int n)
 {

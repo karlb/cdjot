@@ -24,7 +24,7 @@ printf '# hi\n' | ./cdjot     # manual test
 
 - **`process(begin, end, newblock)`** — central dispatcher. Tries each parser in order. `newblock=1` enables block parsers; `newblock=0` restricts to inline. Negative return = block consumed (sets newblock for next iteration), positive = inline consumed.
 - **Block parsers** (fire when newblock=1): `doattr`, `dorefdef`, `doheading`, `doblockquote`, `docodefence`, `dodiv`, `dothematicbreak`, `dotable`, `dodeflist`, `dolist`, `doparagraph`
-- **Inline parsers** (fire when newblock=0): `dolinebreak`, `docode`, `dosurround`, `dolink`, `doautolink`, `doreplace`
+- **Inline parsers** (fire when newblock=0): `dolinebreak`, `docode`, `dosurround`, `doquote`, `dolink`, `doautolink`, `doreplace`
 - **Pre-scans** (run before `process`): `prescan` collects `[label]: url` definitions, `[^label]:` footnote definitions, and heading auto-refs
 
 Key design decisions:
@@ -33,8 +33,8 @@ Key design decisions:
 - Attribute lists are a flat run of NUL-separated name/value pairs in declaration order (`attr_put`/`attr_find`/`attr_merge`/`attr_emit`). djot.js emits attributes in the order written, interleaving classes with `key=val`, so order lives in the structure rather than in a fixed emit sequence. Values are stored unescaped and escaped on output
 - List items collected into a buffer, then `process()` recurses on the buffer
 - Tight/loose list detection: `dolist` pre-scans the entire list for blank lines before emitting any items, so all items get consistent `<p>` wrapping when loose
-- Smart quotes use look-ahead stack simulation to match openers with closers
-- `dosurround` handles emphasis (`_`/`*`), super/subscript (`^`/`~`), and insert/delete/mark (`{+`/`{-`/`{=`) with explicit `{`/`}` delimiters. Uses `inner_openers` counter for closest-opener-wins precedence
+- Smart quotes are inline containers, not glyph substitutions: `doquote` matches a pair the way `dosurround` does and recurses on the interior, so an enclosed delimiter goes literal per syntax.md's precedence rule. Opener/closer eligibility follows djot.js `inline.ts`'s `betweenMatched`
+- `dosurround` handles emphasis (`_`/`*`), super/subscript (`^`/`~`), and insert/delete/mark (`{+`/`{-`/`{=`) with explicit `{`/`}` delimiters. Uses `inner_openers` counter for closest-opener-wins precedence. Both scans count one delimiter kind, so a nested pair of another kind does not clear openers it spans (`*a _b *c_ d*`) — a known spec divergence with no corpus impact; see the note at the scan
 - Tables detect separator rows for alignment and headers; captions via `^` after blank line
 - Footnotes use sequential numbering, multi-paragraph content, backlink injected in last paragraph
 
