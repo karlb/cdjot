@@ -198,18 +198,49 @@ a"b"c"d
 
 Nesting needs the whole stack, not just the nearest opener. The inner
 `"` here has a space before it so it cannot close, and opens a second
-pair; the last `"` then has to reach past it to the first. cdjot kept
-one opener in a single pointer, which the inner quote overwrote, leaving
-the last one with nothing to close -- and no case above catches that,
-because both of them leave at most one opener pending. smart.test:50
-pins the same rule for `'` (`'tis the season to be 'jolly'`), which is
-why `'` was never affected; upstream has no `"` equivalent, so this is
-an upstream candidate too.
+pair; the last `"` then has to reach past it to the first. smart.test:50
+pins the same rule for `'` (`'tis the season to be 'jolly'`); upstream
+has no `"` equivalent, so this is an upstream candidate too.
 
 ```
 "a "b" c"
 .
 <p>“a “b” c”</p>
+```
+
+A quote pair is an inline container, so syntax.md's precedence rule
+applies to it: once the pair closes, the `_` it encloses is literal and
+can no longer open. cdjot used to substitute quote glyphs in doreplace,
+outside the delimiter matching entirely, so the `_`s paired across the
+closing quote and produced an <em> djot.js never emits.
+
+```
+"_"_
+.
+<p>“_”_</p>
+```
+
+A closer adjacent to the opener it would claim encloses nothing, so it
+is refused -- and it then opens instead, rather than falling through to
+an opener further out. Every quote in a run is therefore an opener.
+
+```
+""""
+.
+<p>““““</p>
+```
+
+Marked as both opener and closer, `{"}` matches as an opener, leaving
+the `}` literal, but the glyph still flips once away from the kind's
+default. So the double quote comes out right and the single one left.
+
+```
+{"}
+
+{'}
+.
+<p>”}</p>
+<p>‘}</p>
 ```
 
 The blocks below came out of fixing quadratic scans. They assert output,

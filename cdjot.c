@@ -59,6 +59,7 @@ static int dosurround(const char *b, const char *e, int n);
 static int docode(const char *b, const char *e, int n);
 static int dolink(const char *b, const char *e, int n);
 static int doautolink(const char *b, const char *e, int n);
+static int doquote(const char *b, const char *e, int n);
 static int doreplace(const char *b, const char *e, int n);
 static void process(const char *b, const char *e, int newblock);
 static void hprint(const char *b, const char *e);
@@ -94,16 +95,6 @@ static int in_container;
 static int tight;
 static const char *proc_base;
 
-/* Pending unmatched `"` openers in the current process() run, innermost
- * last. djot.js pairs double quotes with an opener stack and a closer
- * takes the nearest one, so a single pointer would lose the outer quote
- * of a nested pair: in `"a "b" c"` the second `"` cannot close (space
- * before it) and opens instead, and the last one has to find the first
- * still waiting. dq_base is the floor for the current process() run:
- * entries below it belong to an outer run and must not be popped or
- * overwritten. The allocation is reused across runs. */
-static const char **dq_open;
-static int dq_n, dq_base, dq_cap;
 
 /* Cache for doreplace's `{X` scan: a contiguous range [nc_b, nc_eol)
  * in which no `}` exists before the next `\n` or e. Without this, inputs
@@ -112,11 +103,12 @@ static const char *nc_e;
 static const char *nc_b;
 static const char *nc_eol;
 
-/* Cache for the `'` opener look-ahead: in [sq_nc_b, sq_nc_e) no `'` can
- * close, so an opener there is unmatched without scanning for one.
- * Without this, `'a 'a 'a ...` is O(N^2) -- every opener walks to e. */
-static const char *sq_nc_e;
-static const char *sq_nc_b;
+/* Cache for doquote's closer scan, indexed 0 for `"` and 1 for `'`: in
+ * [q_nc_b, q_nc_e) no delimiter of that kind can close, so an opener
+ * there is unmatched without scanning. Without this, `'a 'a 'a ...` is
+ * O(N^2) -- every opener walks to e. */
+static const char *q_nc_e[2];
+static const char *q_nc_b[2];
 
 /* Bracket-match table built once per process() call. bm_match[i] is the
  * offset (relative to bm_base) of the `]` matching `[` at bm_base+i with
@@ -3064,12 +3056,118 @@ doautolink(const char *b, const char *e, int n)
 	}
 }
 
+/* Smart quotes are inline containers (syntax.md, "Precedence"), not
+ * glyph substitutions, so a matched pair makes any delimiter inside it
+ * literal. Matching therefore mirrors dosurround: find the closer the
+ * nearest opener claims, then recurse on the interior. That recursion
+ * is what keeps the `_`s in `"_"_` from pairing across the closing
+ * quote. An unmatched quote falls back to its default glyph, left for
+ * `"` and right for `'`. */
+static int
+doquote(const char *b, const char *e, int n)
+{
+	const char *p, *start, *d, *lq, *rq, *dflt;
+	char ch, before, after;
+	int explicit_open = 0, consumed_open = 0;
+	int can_open, inner_openers = 0, sawclose = 0, ci;
+	const char *last_push = NULL;
+
+	if (n) return 0;
+
+	if (*b == '{' && b + 1 < e && (b[1] == '"' || b[1] == '\'')) {
+		explicit_open = 1;
+		consumed_open = 1;
+	}
+	d = b + consumed_open;
+	ch = *d;
+	if (ch != '"' && ch != '\'') return 0;
+	ci = (ch == '\'');
+	lq = ci ? "\xe2\x80\x98" : "\xe2\x80\x9c";
+	rq = ci ? "\xe2\x80\x99" : "\xe2\x80\x9d";
+	dflt = ci ? rq : lq;
+
+	before = (d > proc_base) ? d[-1] : 0;
+	after = (d + 1 < e) ? d[1] : 0;
+
+	/* `"}` can only close, and unmatched it takes the right glyph.
+	 * Marked both ways, the open marker wins for matching and the `}`
+	 * stays literal, but the glyph still flips once -- away from the
+	 * kind's default, so `{"}` is right and `{'}` is left. Either way
+	 * two bytes go. */
+	if (after == '}') {
+		oputs(explicit_open ? (ci ? lq : rq) : rq);
+		return 2;
+	}
+
+	if (explicit_open)
+		can_open = 1;
+	else if (!ci)
+		can_open = !isws(after);
+	else
+		can_open = !isws(after) && (d == proc_base
+		    || before == ' ' || before == '\t' || before == '\r'
+		    || before == '\n' || before == '"' || before == '\''
+		    || before == '-' || before == '(' || before == '[');
+	if (!can_open) { oputs(dflt); return 1; }
+	if (q_nc_e[ci] == e && d >= q_nc_b[ci]) {
+		oputs(explicit_open ? lq : dflt);
+		return 1 + consumed_open;
+	}
+
+	start = d + 1;
+	for (p = start; p < e; p++) {
+		int explicit_close, is_closer, is_opener;
+		char pb, pa;
+		if (*p == '\\' && p + 1 < e) { p++; continue; }
+		if (*p == '`') { /* skip code spans */
+			int cnt = leadc(p, e, '`');
+			const char *q = p + cnt;
+			while (q < e) {
+				if (*q != '`') { q++; continue; }
+				if (leadc(q, e, '`') == cnt) { p = q + cnt - 1; break; }
+				q += leadc(q, e, '`');
+			}
+			if (q >= e) break;
+			continue;
+		}
+		/* an explicitly marked opener is not ours to match */
+		if (*p == '{' && p + 1 < e && p[1] == ch) { p++; continue; }
+		if (*p != ch) continue;
+		explicit_close = (p + 1 < e && p[1] == '}');
+		if (!explicit_open != !explicit_close) continue;
+		pb = (p > proc_base) ? p[-1] : 0;
+		pa = (p + 1 < e) ? p[1] : 0;
+		is_closer = explicit_close || !isws(pb);
+		is_opener = !isws(pa) && (!ci || pb == ' ' || pb == '\t'
+		    || pb == '\r' || pb == '\n' || pb == '"' || pb == '\''
+		    || pb == '-' || pb == '(' || pb == '[');
+		/* Adjacent to the opener it would claim encloses nothing.
+		 * djot.js refuses those, and the refused closer then opens
+		 * instead -- it does not fall through to an opener further
+		 * out, which is what makes `""""` four left quotes. */
+		if (p - 1 == (inner_openers > 0 ? last_push : d))
+			is_closer = 0;
+		if (is_closer) sawclose = 1;
+		if (is_closer && inner_openers > 0) { inner_openers--; continue; }
+		if (is_closer) {
+			oputs(lq);
+			process(start, p, 0);
+			oputs(rq);
+			return (p + 1 + (explicit_close ? 1 : 0)) - b;
+		}
+		if (is_opener) { inner_openers++; last_push = p; }
+	}
+	/* No closer ahead at all means no later opener needs to look
+	 * either, which keeps `'a 'a 'a ...` from being O(N^2). */
+	if (!sawclose) { q_nc_e[ci] = e; q_nc_b[ci] = d; }
+	oputs(explicit_open ? lq : dflt);
+	return 1 + consumed_open;
+}
+
 static int
 doreplace(const char *b, const char *e, int n)
 {
 	int run, em, en;
-	char before, after;
-	int can_open, can_close;
 	if (n) return 0;
 
 	/* inline comment: {% ... %} — consume without output. Single
@@ -3124,84 +3222,6 @@ doreplace(const char *b, const char *e, int n)
 		return 3;
 	}
 
-	/* explicit quote markers: {' → left, '} → right */
-	if (*b == '{' && b + 1 < e && (b[1] == '\'' || b[1] == '"')) {
-		int dbl = (b[1] == '"');
-		oputs(dbl ? "\xe2\x80\x9c" : "\xe2\x80\x98");
-		return 2;
-	}
-
-	if (*b == '"' || *b == '\'') {
-		before = (b > proc_base) ? *(b - 1) : 0;
-		after = (b + 1 < e) ? b[1] : 0;
-		/* explicit closer: '} or "} */
-		if (after == '}') {
-			oputs(*b == '"' ? "\xe2\x80\x9d" : "\xe2\x80\x99");
-			return 2; /* consume the } too */
-		}
-		/* ' before digit or after ] is always apostrophe */
-		if (*b == '\'' && (isdigit((unsigned char)after) || before == ']')) {
-			oputs("\xe2\x80\x99");
-			return 1;
-		}
-		/* djot.js puts no opener restriction on `"` (any one may open)
-		 * and renders every unmatched one as a left quote. A closer
-		 * takes the nearest pending opener, so this pops the stack
-		 * when one is pending and the span isn't empty, and otherwise
-		 * pushes. Whitespace before rules out closing, which is what
-		 * makes the inner quote of `"a "b" c"` open instead. */
-		if (*b == '"') {
-			if (dq_n > dq_base && !isws(before)
-			    && dq_open[dq_n - 1] != b - 1) {
-				oputs("\xe2\x80\x9d");
-				dq_n--;
-			} else {
-				if (!isws(after)) {
-					GROWA(dq_open, dq_n, dq_cap);
-					dq_open[dq_n++] = b;
-				}
-				oputs("\xe2\x80\x9c");
-			}
-			return 1;
-		}
-		can_open = !isws(after) && (isws(before) || isasciipunct(before) || before == 0);
-		can_close = !isws(before) && (isws(after) || isasciipunct(after) || after == 0);
-		if (can_close && !can_open) {
-			oputs("\xe2\x80\x99");
-		} else if (can_open) {
-			/* look-ahead: simulate stack matching to check if this
-			 * opener has a closer. Unmatched openers → apostrophe */
-			int stack = 1;
-			int sawclose = 0;
-			const char *q;
-			if (sq_nc_e == e && b >= sq_nc_b) {
-				oputs("\xe2\x80\x99");
-				return 1;
-			}
-			for (q = b + 1; q < e && stack > 0; q++) {
-				if (*q == '\'') {
-					char qb = q[-1], qa = (q+1 < e) ? q[1] : 0;
-					int qo = !isws(qa) && (isws(qb) || isasciipunct(qb));
-					int qc = !isws(qb) && (isws(qa) || isasciipunct(qa) || qa == 0);
-					/* q == b+1 would be an empty span; djot.js
-					 * refuses those, leaving both unmatched */
-					if (qc) sawclose = 1;
-					if (qc && q > b + 1) { stack--; if (stack == 0) break; }
-					if (qo) stack++;
-				}
-			}
-			/* Reaching e having seen no eligible closer at all means
-			 * none exists ahead, so no later opener needs to look. */
-			if (stack > 0 && !sawclose) {
-				sq_nc_e = e;
-				sq_nc_b = b;
-			}
-			oputs(stack == 0 ? "\xe2\x80\x98" : "\xe2\x80\x99");
-		} else {
-			oputs("\xe2\x80\x99"); /* intra-word: apostrophe */
-		}
-		return 1;
-	}
 
 	/* spaces before hard break: consume "ws \ ws newline" as <br>.
 	 * Mid-run spaces skip the forward scan: the previous iteration
@@ -3234,9 +3254,8 @@ process(const char *b, const char *e, int newblock)
 {
 	const char *p;
 	const char *save_base = proc_base;
-	int save_dq_base = dq_base;
-	const char *save_sq_nc_e = sq_nc_e;
-	const char *save_sq_nc_b = sq_nc_b;
+	const char *save_q_nc_e0 = q_nc_e[0], *save_q_nc_b0 = q_nc_b[0];
+	const char *save_q_nc_e1 = q_nc_e[1], *save_q_nc_b1 = q_nc_b[1];
 	const char *save_nc_e = nc_e;
 	const char *save_nc_b = nc_b;
 	const char *save_nc_eol = nc_eol;
@@ -3248,9 +3267,8 @@ process(const char *b, const char *e, int newblock)
 	int allow_block = newblock;
 
 	proc_base = b;
-	dq_base = dq_n;
-	sq_nc_e = NULL;
-	sq_nc_b = NULL;
+	q_nc_e[0] = NULL; q_nc_b[0] = NULL;
+	q_nc_e[1] = NULL; q_nc_b[1] = NULL;
 	nc_e = NULL;
 	nc_b = NULL;
 	nc_eol = NULL;
@@ -3268,10 +3286,8 @@ process(const char *b, const char *e, int newblock)
 				p = le;
 				if (p >= e) {
 					proc_base = save_base;
-					dq_n = dq_base;
-					dq_base = save_dq_base;
-					sq_nc_e = save_sq_nc_e;
-					sq_nc_b = save_sq_nc_b;
+					q_nc_e[0] = save_q_nc_e0; q_nc_b[0] = save_q_nc_b0;
+					q_nc_e[1] = save_q_nc_e1; q_nc_b[1] = save_q_nc_b1;
 					nc_e = save_nc_e;
 					nc_b = save_nc_b;
 					nc_eol = save_nc_eol;
@@ -3343,7 +3359,8 @@ process(const char *b, const char *e, int newblock)
 				affected = dosurround(p, e, 0);
 				break;
 			case '{':
-				if (!(affected = dosurround(p, e, 0)))
+				if (!(affected = dosurround(p, e, 0))
+				    && !(affected = doquote(p, e, 0)))
 					affected = doreplace(p, e, 0);
 				break;
 			case '[':
@@ -3354,10 +3371,12 @@ process(const char *b, const char *e, int newblock)
 				if (!(affected = doautolink(p, e, 0)))
 					affected = doreplace(p, e, 0);
 				break;
-			case '-':
-			case '.':
 			case '\'':
 			case '"':
+				affected = doquote(p, e, 0);
+				break;
+			case '-':
+			case '.':
 			case ' ':
 			case '\t':
 			case '&':
@@ -3379,10 +3398,8 @@ process(const char *b, const char *e, int newblock)
 			newblock = affected < 0;
 	}
 	proc_base = save_base;
-	dq_n = dq_base;
-	dq_base = save_dq_base;
-	sq_nc_e = save_sq_nc_e;
-	sq_nc_b = save_sq_nc_b;
+	q_nc_e[0] = save_q_nc_e0; q_nc_b[0] = save_q_nc_b0;
+	q_nc_e[1] = save_q_nc_e1; q_nc_b[1] = save_q_nc_b1;
 	nc_e = save_nc_e;
 	nc_b = save_nc_b;
 	nc_eol = save_nc_eol;
