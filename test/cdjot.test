@@ -255,6 +255,17 @@ lookup has to continue past an unmatched `[`, not abandon the run.
 [</sup>y</p>
 ```
 
+A run of `'` openers with no closer anywhere stays apostrophes. Each
+opener used to simulate stack matching to e, O(N^2) -- 200k of these
+took 43s. Once a scan reaches e having seen no eligible closer, the
+sq_nc_b cache tells the later openers not to look.
+
+```
+'a 'a 'a
+.
+<p>’a ’a ’a</p>
+```
+
 `{X` with X non-alpha and no closing `}` stays literal. doreplace used
 to re-scan to the next `\n` on every `{`, O(N^2); the nc_b/nc_eol cache
 makes it linear.

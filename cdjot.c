@@ -112,6 +112,12 @@ static const char *nc_e;
 static const char *nc_b;
 static const char *nc_eol;
 
+/* Cache for the `'` opener look-ahead: in [sq_nc_b, sq_nc_e) no `'` can
+ * close, so an opener there is unmatched without scanning for one.
+ * Without this, `'a 'a 'a ...` is O(N^2) -- every opener walks to e. */
+static const char *sq_nc_e;
+static const char *sq_nc_b;
+
 /* Bracket-match table built once per process() call. bm_match[i] is the
  * offset (relative to bm_base) of the `]` matching `[` at bm_base+i with
  * depth-0 escape-aware matching, or -1 if no such match exists. Replaces
@@ -3166,7 +3172,12 @@ doreplace(const char *b, const char *e, int n)
 			/* look-ahead: simulate stack matching to check if this
 			 * opener has a closer. Unmatched openers → apostrophe */
 			int stack = 1;
+			int sawclose = 0;
 			const char *q;
+			if (sq_nc_e == e && b >= sq_nc_b) {
+				oputs("\xe2\x80\x99");
+				return 1;
+			}
 			for (q = b + 1; q < e && stack > 0; q++) {
 				if (*q == '\'') {
 					char qb = q[-1], qa = (q+1 < e) ? q[1] : 0;
@@ -3174,9 +3185,16 @@ doreplace(const char *b, const char *e, int n)
 					int qc = !isws(qb) && (isws(qa) || isasciipunct(qa) || qa == 0);
 					/* q == b+1 would be an empty span; djot.js
 					 * refuses those, leaving both unmatched */
+					if (qc) sawclose = 1;
 					if (qc && q > b + 1) { stack--; if (stack == 0) break; }
 					if (qo) stack++;
 				}
+			}
+			/* Reaching e having seen no eligible closer at all means
+			 * none exists ahead, so no later opener needs to look. */
+			if (stack > 0 && !sawclose) {
+				sq_nc_e = e;
+				sq_nc_b = b;
 			}
 			oputs(stack == 0 ? "\xe2\x80\x98" : "\xe2\x80\x99");
 		} else {
@@ -3217,6 +3235,8 @@ process(const char *b, const char *e, int newblock)
 	const char *p;
 	const char *save_base = proc_base;
 	int save_dq_base = dq_base;
+	const char *save_sq_nc_e = sq_nc_e;
+	const char *save_sq_nc_b = sq_nc_b;
 	const char *save_nc_e = nc_e;
 	const char *save_nc_b = nc_b;
 	const char *save_nc_eol = nc_eol;
@@ -3229,6 +3249,8 @@ process(const char *b, const char *e, int newblock)
 
 	proc_base = b;
 	dq_base = dq_n;
+	sq_nc_e = NULL;
+	sq_nc_b = NULL;
 	nc_e = NULL;
 	nc_b = NULL;
 	nc_eol = NULL;
@@ -3248,6 +3270,8 @@ process(const char *b, const char *e, int newblock)
 					proc_base = save_base;
 					dq_n = dq_base;
 					dq_base = save_dq_base;
+					sq_nc_e = save_sq_nc_e;
+					sq_nc_b = save_sq_nc_b;
 					nc_e = save_nc_e;
 					nc_b = save_nc_b;
 					nc_eol = save_nc_eol;
@@ -3357,6 +3381,8 @@ process(const char *b, const char *e, int newblock)
 	proc_base = save_base;
 	dq_n = dq_base;
 	dq_base = save_dq_base;
+	sq_nc_e = save_sq_nc_e;
+	sq_nc_b = save_sq_nc_b;
 	nc_e = save_nc_e;
 	nc_b = save_nc_b;
 	nc_eol = save_nc_eol;
