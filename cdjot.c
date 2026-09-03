@@ -249,6 +249,18 @@ hprint(const char *b, const char *e)
 	}
 }
 
+/* hprint plus `"` -> &quot;, for text emitted inside a quoted HTML
+ * attribute. Body text leaves `"` alone (djot.js does too); only an
+ * <img alt> needs it, or the quote closes the attribute early. */
+static void
+aprint(const char *b, const char *e)
+{
+	for (; b < e; b++) {
+		if (*b == '"') oputs("&quot;");
+		else hprint(b, b + 1);
+	}
+}
+
 static const char *
 eol(const char *p, const char *e)
 {
@@ -2704,14 +2716,14 @@ altprint(const char *b, const char *e)
 {
 	for (; b < e; b++) {
 		if (*b == '_' || *b == '*') continue;
-		if (*b == '\\' && b + 1 < e && isasciipunct(b[1])) { b++; hprint(b, b+1); continue; }
+		if (*b == '\\' && b + 1 < e && isasciipunct(b[1])) { b++; aprint(b, b+1); continue; }
 		if (*b == '`') {
 			int cnt = leadc(b, e, '`');
 			const char *q = b + cnt;
 			while (q < e) {
 				if (*q != '`') { q++; continue; }
 				if (leadc(q, e, '`') == cnt) {
-					hprint(b + cnt, q);
+					aprint(b + cnt, q);
 					b = q + cnt - 1;
 					goto next;
 				}
@@ -2748,7 +2760,7 @@ altprint(const char *b, const char *e)
 				}
 			}
 		}
-		hprint(b, b + 1);
+		aprint(b, b + 1);
 		next:;
 	}
 }

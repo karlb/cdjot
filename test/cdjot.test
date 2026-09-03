@@ -300,6 +300,20 @@ escaping passes every upstream file at all five, so pin each one.
 <p><img alt="alt" src="/x?a=1&amp;b=2&lt;z"></p>
 ```
 
+Alt text lands inside a quoted HTML attribute, so a `"` in it must be
+escaped too, or it closes the attribute and the rest becomes markup.
+Body text leaves `"` alone, so this is the one place it is escaped. All
+three <img> emit sites share the escaper; the reference one is pinned
+here because it is reached separately.
+
+```
+![a" onerror=x][r]
+
+[r]: u.png
+.
+<p><img alt="a&quot; onerror=x" src="u.png"></p>
+```
+
 An autolink cannot contain a literal `<` -- that would end it -- but an
 `&` must still be escaped, in the href and in the link text alike:
 
