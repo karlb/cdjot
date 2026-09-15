@@ -17,15 +17,79 @@ Inline attributes on links: {key=val}, {.class}, {#id} after
 <p><a href="b" class="cls" id="id">a</a></p>
 ```
 
-A quoted value may contain `}`. dolink scans for the closing brace
-itself rather than calling parse_attrs to find it, so that scan has to
-skip quoted runs; ending it at the first `}` truncates the value and
-leaves the rest as text.
+A quoted value may contain `}`, so the scan that finds the closing brace
+has to skip quoted runs; ending it at the first `}` truncates the value
+and leaves the rest as text. dolink takes four bracket shapes and once
+carried a separate brace scan for each, three of which got this wrong,
+so each shape is pinned on its own. Upstream candidates: no upstream
+file asserts any of the four.
 
 ```
 [a](b){k="}"}
 .
 <p><a href="b" k="}">a</a></p>
+```
+
+```
+![a](i.png){k="}"}
+.
+<p><img alt="a" src="i.png" k="}"></p>
+```
+
+```
+[a][r]{k="}"}
+
+[r]: /u
+.
+<p><a href="/u" k="}">a</a></p>
+```
+
+```
+[a]{k="}"}
+.
+<p><span k="}">a</span></p>
+```
+
+An inline attribute list may span lines wherever it appears, including
+after a reference link. cdjot's reference-link scan was the one that
+stopped at the newline and left the braces as text. Upstream candidate.
+
+```
+[a][r]{.x
+.y}
+
+[r]: /u
+.
+<p><a href="/u" class="x y">a</a></p>
+```
+
+A verbatim span is closed only by a backtick run of its own length, so
+an inner run of a different length belongs to the content. Every parser
+that scans across a verbatim span has to skip whole runs to agree with
+docode; stepping one byte at a time instead lets the second backtick of
+an inner `` close a span opened with one. next_pipe did that and read
+the `|` inside the span as a cell break. Upstream candidate: no upstream
+case puts an unequal backtick run inside a verbatim span.
+
+```
+| `a``b|c` | x |
+.
+<table>
+<tr>
+<td><code>a``b|c</code></td>
+<td>x</td>
+</tr>
+</table>
+```
+
+The same slip in doparagraph's `word{attrs}` rewrite, which reached
+inside the span and turned an attribute list that is verbatim text into
+span syntax. Upstream candidate.
+
+```
+x `a``b{.z}c` y
+.
+<p>x <code>a``b{.z}c</code> y</p>
 ```
 
 Attributes are emitted in declaration order, and a repeated name keeps

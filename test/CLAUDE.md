@@ -2,14 +2,18 @@
 
 The goal is one true test suite for djot implementations. Every case here
 should be either **upstream's** or **cdjot-specific**, with nothing in a
-third bucket of "local copy of a case that belongs upstream".
+third bucket of "local copy of a case that belongs upstream" — except
+while a case is *on its way* upstream, which the prose has to say. See
+"Upstream candidates" below.
 
 ## Layout
 
 - `*.test` except `cdjot.test` — copied byte-verbatim from `jgm/djot.js`.
   **Never edit these.** A local edit silently forks the suite; fix cdjot
   or open a PR upstream instead.
-- `cdjot.test` — cases upstream does not have and should not have.
+- `cdjot.test` — cases upstream does not have: ones it should not have,
+  plus upstream candidates parked here until they land (marked as such
+  in their prose).
 
 Omitted upstream files: `symb.test` (AST output, no standard HTML
 mapping), `filters.test` and `sourcepos.test` (N/A for a stdin-to-stdout
@@ -63,6 +67,20 @@ settle it and cdjot is the wrong one, do the opposite: no case. Pinning
 our output would assert a known bug and fail the day someone repairs
 it. Record it at the code instead (see the cross-kind note on
 `dosurround`'s scan, for `*a _b *c_ d*`).
+
+### Upstream candidates
+
+A cdjot bug that djot.js gets right leaves a fix with nothing asserting
+it: upstream has no case, and by the rule above it does not belong in
+`cdjot.test` either. Leaving it uncovered is the worse of the two, so it
+goes in `cdjot.test` with **"upstream candidate"** in its prose and a
+sentence on what upstream has instead (usually nothing). That marks it
+as a case to send, not one to keep.
+
+Two consequences. Such a case is *not* a divergence to preserve — if
+upstream adopts it, delete the local copy in the same sync that brings
+the upstream file in. And it still has to earn its place: build the
+pre-fix binary and confirm the case fails against it, as below.
 
 ## Deciding a case is redundant
 
