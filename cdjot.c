@@ -2851,62 +2851,29 @@ dolink(const char *b, const char *e, int n)
 		destend = q;
 		while (dest < destend && isws(*dest)) dest++;
 		while (destend > dest && isws(destend[-1])) destend--;
-		if (img) {
-			const char *after = q + 1;
-			oputs("<img alt=\"");
-			altprint(text, textend);
-			oputs("\" src=\"");
-			emit_url(dest, destend);
-			oputs("\"");
-			/* check for inline attributes {.class #id ...} */
-			if (after < e && *after == '{') {
-				const char *ab = after + 1;
-				const char *ae = ab;
-				while (ae < e && *ae != '}') ae++;
-				if (ae < e && *ae == '}') {
-					char *sa = NULL;
-					parse_attrs(ab, ae, &sa);
-					if (sa) {
-						attr_emit(sa);
-						free(sa);
-						q = ae; /* advance past } */
-					}
-				}
+		{
+			char *sa;
+			const char *aend = scan_inline_attrs(q + 1, e, &sa);
+			if (img) {
+				oputs("<img alt=\"");
+				altprint(text, textend);
+				oputs("\" src=\"");
+				emit_url(dest, destend);
+				oputc('"');
+				attr_emit(sa);
+				oputs(">");
+			} else {
+				oputs("<a href=\"");
+				emit_url(dest, destend);
+				oputc('"');
+				attr_emit(sa);
+				oputs(">");
+				process(text, textend, 0);
+				oputs("</a>");
 			}
-			oputs(">");
-		} else {
-			char *sa = NULL;
-			const char *after = q + 1;
-			/* check for inline attributes {.class #id key=val ...} */
-			if (after < e && *after == '{') {
-				const char *ab = after + 1;
-				const char *ae = ab;
-				while (ae < e && *ae != '}') {
-					if (*ae == '\\' && ae + 1 < e) { ae += 2; continue; }
-					if (*ae == '"') {
-						ae++;
-						while (ae < e && *ae != '"') {
-							if (*ae == '\\' && ae + 1 < e) ae += 2;
-							else ae++;
-						}
-						if (ae < e) ae++;
-					} else ae++;
-				}
-				if (ae < e && *ae == '}') {
-					parse_attrs(ab, ae, &sa);
-					if (sa) q = ae;
-				}
-			}
-			oputs("<a href=\"");
-			emit_url(dest, destend);
-			oputs("\"");
-			attr_emit(sa);
-			oputs(">");
-			process(text, textend, 0);
-			oputs("</a>");
 			free(sa);
+			return aend - b;
 		}
-		return q + 1 - b;
 	}
 	if (q < e && *q == '[') {
 		/* reference link [text][ref] */
@@ -2921,19 +2888,12 @@ dolink(const char *b, const char *e, int n)
 		{
 			int ri = findref(label, labellen, 0, nrefs, &url, &urllen);
 			if (ri) {
-				/* check for inline {attrs} after ] */
-				const char *rattr = "";
-				char *inline_attr = NULL;
-				const char *after_ref = q + 1;
-				if (after_ref < e && *after_ref == '{') {
-					const char *ab = after_ref + 1;
-					const char *ae = ab;
-					while (ae < e && *ae != '}' && *ae != '\n') ae++;
-					if (ae < e && *ae == '}') {
-						parse_attrs(ab, ae, &inline_attr);
-						if (inline_attr) q = ae; /* consume the {attrs} */
-					}
-				}
+				/* inline {attrs} after ] override the definition's */
+				char *inline_attr;
+				const char *rattr;
+				const char *aend = scan_inline_attrs(q + 1, e,
+				    &inline_attr);
+				if (aend > q + 1) q = aend - 1;
 				rattr = (inline_attr && inline_attr[0]) ? inline_attr : refs[ri-1].attrs;
 				if (img) {
 					oputs("<img alt=\"");
@@ -2970,23 +2930,18 @@ dolink(const char *b, const char *e, int n)
 	}
 	/* span syntax [text]{.class #id ...} — may span lines */
 	if (q < e && *q == '{') {
-		const char *ab = q + 1;
-		const char *ae = ab;
-		while (ae < e && *ae != '}') ae++;
-		if (ae < e && *ae == '}') {
-			char *sa = NULL;
-			parse_attrs(ab, ae, &sa);
-			/* a span is only a span when a valid attribute follows;
-			 * otherwise the brackets stay literal (matches djot.js) */
-			if (!sa) return 0;
-			oputs("<span");
-			attr_emit(sa);
-			oputc('>');
-			process(text, textend, 0);
-			oputs("</span>");
-			free(sa);
-			return ae + 1 - b;
-		}
+		char *sa;
+		const char *aend = scan_inline_attrs(q, e, &sa);
+		/* a span is only a span when a valid attribute follows;
+		 * otherwise the brackets stay literal (matches djot.js) */
+		if (!sa) return 0;
+		oputs("<span");
+		attr_emit(sa);
+		oputc('>');
+		process(text, textend, 0);
+		oputs("</span>");
+		free(sa);
+		return aend - b;
 	}
 	return 0;
 }
