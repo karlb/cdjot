@@ -232,27 +232,31 @@ build_bracket_match(const char *b, const char *e)
 	sc.bm_end = e;
 }
 
+/* HTML-escape [b, e). Inside a quoted attribute `"` has to go as well,
+ * or it closes the attribute early; body text leaves it alone, as
+ * djot.js does. hprint is the body-text form, aprint the attribute one. */
 static void
-hprint(const char *b, const char *e)
+escape(const char *b, const char *e, int inattr)
 {
 	for (; b < e; b++) {
-		if (*b == '&')      oputs("&amp;");
-		else if (*b == '<') oputs("&lt;");
-		else if (*b == '>') oputs("&gt;");
-		else                oputc(*b);
+		if (*b == '&')                oputs("&amp;");
+		else if (*b == '<')           oputs("&lt;");
+		else if (*b == '>')           oputs("&gt;");
+		else if (*b == '"' && inattr) oputs("&quot;");
+		else                          oputc(*b);
 	}
 }
 
-/* hprint plus `"` -> &quot;, for text emitted inside a quoted HTML
- * attribute. Body text leaves `"` alone (djot.js does too); only an
- * <img alt> needs it, or the quote closes the attribute early. */
+static void
+hprint(const char *b, const char *e)
+{
+	escape(b, e, 0);
+}
+
 static void
 aprint(const char *b, const char *e)
 {
-	for (; b < e; b++) {
-		if (*b == '"') oputs("&quot;");
-		else hprint(b, b + 1);
-	}
+	escape(b, e, 1);
 }
 
 static const char *
@@ -358,34 +362,18 @@ normalize_label(const char *s, int len, char *out, int dropemph)
 	return o;
 }
 
+/* Look a label up in refs[lo, hi). Returns its 1-based index, or 0 when
+ * there is no definition; url/urllen, when given, take the destination.
+ * Heading auto-refs are registered last, so a lookup over the whole array
+ * finds an explicit definition first; prescan passes a range to ask
+ * whether one exists at all. */
 static int
-findref(const char *label, int len, const char **url, int *urllen)
+findref(const char *label, int len, int lo, int hi,
+    const char **url, int *urllen)
 {
 	char stack[1024], *buf = stack, *heap = NULL;
 	int nlen, i, found = 0;
-	if (len > (int)sizeof(stack)) {
-		heap = malloc(len);
-		if (!heap) return 0;
-		buf = heap;
-	}
-	nlen = normalize_label(label, len, buf, 1);
-	for (i = 0; i < nrefs; i++)
-		if (refs[i].normlen == nlen
-		    && !memcmp(refs[i].norm, buf, nlen)) {
-			*url = refs[i].url;
-			*urllen = refs[i].urllen;
-			found = i + 1; /* 1-based index */
-			break;
-		}
-	free(heap);
-	return found;
-}
 
-static int
-findref_range(const char *label, int len, int lo, int hi)
-{
-	char stack[1024], *buf = stack, *heap = NULL;
-	int nlen, i, found = 0;
 	if (len > (int)sizeof(stack)) {
 		heap = malloc(len);
 		if (!heap) return 0;
@@ -395,7 +383,11 @@ findref_range(const char *label, int len, int lo, int hi)
 	for (i = lo; i < hi; i++)
 		if (refs[i].normlen == nlen
 		    && !memcmp(refs[i].norm, buf, nlen)) {
-			found = 1;
+			if (url) {
+				*url = refs[i].url;
+				*urllen = refs[i].urllen;
+			}
+			found = i + 1;
 			break;
 		}
 	free(heap);
@@ -636,13 +628,7 @@ attrs_comment_only(const char *b, const char *e)
 static void
 oputs_attr(const char *s)
 {
-	for (; *s; s++) {
-		if (*s == '&')      oputs("&amp;");
-		else if (*s == '<') oputs("&lt;");
-		else if (*s == '>') oputs("&gt;");
-		else if (*s == '"') oputs("&quot;");
-		else                oputc(*s);
-	}
+	escape(s, s + strlen(s), 1);
 }
 
 /* Emit every attribute but skip, which may be NULL. Headings emit their
@@ -883,14 +869,8 @@ dotable(const char *b, const char *e, int n)
 	while (p < e && *p == ' ') p++;
 	if (p >= e || *p != '|') return 0;
 
-	/* verify it's a table row (not just | in text) — need at least | cell | */
-	{
-		const char *le = eol(p, e);
-		const char *q = p + 1;
-		/* skip to next pipe, respecting escapes and code spans */
-		const char *np = next_pipe(q, le);
-		if (!np) return 0; /* no closing pipe — not a table */
-	}
+	/* a row needs a closing pipe: a lone | in text is not a table */
+	if (!next_pipe(p + 1, eol(p, e))) return 0;
 
 	oputs("<table>\n");
 
@@ -2774,25 +2754,13 @@ emit_url(const char *b, const char *e)
 				if (*b == '\n' || *b == '\r') nl = 1;
 				b++;
 			}
-			if (!nl)
-				for (; s < b; s++) oputc(*s);
+			if (!nl) owrite(s, b - s);
 			b--;
 			continue;
 		}
-		if (*b == '\\' && b + 1 < e && isasciipunct(b[1])) {
-			b++;
-			if (*b == '&') oputs("&amp;");
-			else if (*b == '"') oputs("&quot;");
-			else if (*b == '<') oputs("&lt;");
-			else if (*b == '>') oputs("&gt;");
-			else oputc(*b);
-			continue;
-		}
-		if (*b == '&') oputs("&amp;");
-		else if (*b == '"') oputs("&quot;");
-		else if (*b == '<') oputs("&lt;");
-		else if (*b == '>') oputs("&gt;");
-		else oputc(*b);
+		if (*b == '\\' && b + 1 < e && isasciipunct(b[1]))
+			b++;	/* the escape drops, the character stays */
+		aprint(b, b + 1);
 	}
 }
 
@@ -2951,7 +2919,7 @@ dolink(const char *b, const char *e, int n)
 		int labellen = refend - ref;
 		if (labellen == 0) { label = text; labellen = textend - text; }
 		{
-			int ri = findref(label, labellen, &url, &urllen);
+			int ri = findref(label, labellen, 0, nrefs, &url, &urllen);
 			if (ri) {
 				/* check for inline {attrs} after ] */
 				const char *rattr = "";
@@ -3554,8 +3522,8 @@ prescan(const char *b, const char *e)
 		int hi;
 		int href_start = nrefs;
 		for (hi = 0; hi < nhdefs; hi++) {
-			if (findref_range(hdefs[hi].content, hdefs[hi].len,
-			    href_start, nrefs))
+			if (findref(hdefs[hi].content, hdefs[hi].len,
+			    href_start, nrefs, NULL, NULL))
 				continue;
 			char *hattrs = NULL;
 			const char *custom_id;
