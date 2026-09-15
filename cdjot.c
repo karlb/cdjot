@@ -285,6 +285,24 @@ spaces(const char *p, const char *e)
 	return leadc(p, e, ' ');
 }
 
+/* p points at the opening backtick run of a verbatim span. Return the
+ * position just past the matching closing run, or NULL if unclosed. A
+ * run of a different length does not close the span, so whole runs are
+ * skipped: in `` `a``b|c` `` the span reaches the final backtick, which
+ * is what keeps the `|` out of a table's cell scan. */
+static const char *
+skip_code_span(const char *p, const char *e)
+{
+	int cnt = leadc(p, e, '`'), run;
+
+	for (p += cnt; p < e; p += run) {
+		if (*p != '`') { run = 1; continue; }
+		run = leadc(p, e, '`');
+		if (run == cnt) return p + run;
+	}
+	return NULL;
+}
+
 static int
 isasciipunct(int c)
 {
@@ -800,16 +818,8 @@ next_pipe(const char *p, const char *e)
 	while (p < e) {
 		if (*p == '\\' && p + 1 < e) { p += 2; continue; }
 		if (*p == '`') {
-			int cnt = leadc(p, e, '`');
-			const char *q = p + cnt;
-			while (q < e) {
-				if (*q == '`' && leadc(q, e, '`') == cnt)
-					{ p = q + cnt; goto found; }
-				q++;
-			}
-			p = q;
-			continue;
-		found:
+			p = skip_code_span(p, e);
+			if (!p) return NULL;
 			continue;
 		}
 		if (*p == '|') return p;
@@ -2115,19 +2125,13 @@ doparagraph(const char *b, const char *e, int n)
 				continue;
 			}
 			if (*s == '`') {
-				/* skip code spans */
-				int cnt = leadc(s, p, '`');
-				const char *q = s + cnt;
-				while (q < p) {
-					if (*q == '`' && leadc(q, p, '`') == cnt) {
-						q += cnt; break;
-					}
-					q++;
-				}
-				while (s < q) {
-					GROWBUF(nbuf, nlen, ncap, 1);
-					nbuf[nlen++] = *s++;
-				}
+				/* code spans copy over verbatim */
+				const char *q = skip_code_span(s, p);
+				if (!q) q = p;
+				GROWBUF(nbuf, nlen, ncap, (int)(q - s));
+				memcpy(nbuf + nlen, s, q - s);
+				nlen += q - s;
+				s = q;
 				continue;
 			}
 			if (*s == '{' && !(s > b && s[-1] == '\\') && !(s > b && s[-1] == ']')) {
@@ -2339,8 +2343,8 @@ dolinebreak(const char *b, const char *e, int n)
 static int
 docode(const char *b, const char *e, int n)
 {
-	const char *p, *code, *start;
-	int count, run, codelen;
+	const char *p, *code, *after, *start;
+	int count, codelen;
 	int math = 0; /* 0=none, 1=inline, 2=display */
 
 	if (n) return 0;
@@ -2360,77 +2364,73 @@ docode(const char *b, const char *e, int n)
 
 	if (*b != '`') return 0;
 	count = leadc(b, e, '`');
-	p = b + count;
-	while (p < e) {
-		if (*p != '`') { p++; continue; }
-		run = leadc(p, e, '`');
-		if (run == count) {
-			const char *after = p + count;
-			code = b + count;
-			codelen = p - code;
-			/* trim single space from each end if content
-			 * starts or ends with a backtick */
-			if (codelen >= 2
-			    && code[0] == ' ' && code[codelen-1] == ' '
-			    && (code[1] == '`' || code[codelen-2] == '`')) {
-				code++;
-				codelen -= 2;
-			}
-			/* check for raw suffix {=format} — format must have no spaces */
-			if (!math && after < e && *after == '{' && after + 1 < e
-			    && after[1] == '=') {
-				const char *fe = after + 2;
-				while (fe < e && *fe != '}' && *fe != '\n'
-				    && *fe != ' ') fe++;
-				if (fe < e && *fe == '}') {
-					const char *fmt = after + 2;
-					int fmtlen = fe - fmt;
-					if (fmtlen == 4 && !memcmp(fmt, "html", 4)) {
-						/* raw html: output unescaped */
-						owrite(code, codelen);
-					}
-					/* other formats: silently drop */
-					return fe + 1 - start;
-				}
-			}
-			if (math) {
-				oprintf("<span class=\"math %s\">%s",
-				    math == 1 ? "inline" : "display",
-				    math == 1 ? "\\(" : "\\[");
-				hprint(code, code + codelen);
-				oputs(math == 1 ? "\\)" : "\\]");
-				oputs("</span>");
-				return p + count - start;
-			} else {
-				char *sa = NULL;
-				const char *aend = after;
-				/* parse inline attrs unless {=format} attempt */
-				if (!(after < e && *after == '{' && after + 1 < e
-				    && after[1] == '='))
-					aend = scan_inline_attrs(after, e, &sa);
-				oputs("<code");
-				attr_emit(sa);
-				oputc('>');
-				hprint(code, code + codelen);
-				oputs("</code>");
-				free(sa);
-				return aend - start;
-			}
-		}
-		p += run;
-	}
-	if (math) return 0; /* unclosed math: don't match */
-	/* unclosed: implicit close at end */
 	code = b + count;
-	codelen = e - code;
-	while (codelen > 0 && isws(code[codelen-1])) codelen--;
-	if (codelen >= 2 && code[0] == ' ' && code[codelen-1] == ' ') {
-		code++; codelen -= 2;
+	after = skip_code_span(b, e);
+
+	if (!after) {
+		if (math) return 0; /* unclosed math: don't match */
+		/* unclosed: implicit close at end */
+		codelen = e - code;
+		while (codelen > 0 && isws(code[codelen-1])) codelen--;
+		if (codelen >= 2 && code[0] == ' ' && code[codelen-1] == ' ') {
+			code++; codelen -= 2;
+		}
+		oputs("<code>");
+		hprint(code, code + codelen);
+		oputs("</code>");
+		return e - start;
 	}
-	oputs("<code>");
-	hprint(code, code + codelen);
-	oputs("</code>");
-	return e - start;
+
+	p = after - count;	/* start of the closing run */
+	codelen = p - code;
+	/* trim single space from each end if content
+	 * starts or ends with a backtick */
+	if (codelen >= 2
+	    && code[0] == ' ' && code[codelen-1] == ' '
+	    && (code[1] == '`' || code[codelen-2] == '`')) {
+		code++;
+		codelen -= 2;
+	}
+	/* check for raw suffix {=format} — format must have no spaces */
+	if (!math && after < e && *after == '{' && after + 1 < e
+	    && after[1] == '=') {
+		const char *fe = after + 2;
+		while (fe < e && *fe != '}' && *fe != '\n' && *fe != ' ') fe++;
+		if (fe < e && *fe == '}') {
+			const char *fmt = after + 2;
+			int fmtlen = fe - fmt;
+			if (fmtlen == 4 && !memcmp(fmt, "html", 4)) {
+				/* raw html: output unescaped */
+				owrite(code, codelen);
+			}
+			/* other formats: silently drop */
+			return fe + 1 - start;
+		}
+	}
+	if (math) {
+		oprintf("<span class=\"math %s\">%s",
+		    math == 1 ? "inline" : "display",
+		    math == 1 ? "\\(" : "\\[");
+		hprint(code, code + codelen);
+		oputs(math == 1 ? "\\)" : "\\]");
+		oputs("</span>");
+		return after - start;
+	}
+	{
+		char *sa = NULL;
+		const char *aend = after;
+		/* parse inline attrs unless {=format} attempt */
+		if (!(after < e && *after == '{' && after + 1 < e
+		    && after[1] == '='))
+			aend = scan_inline_attrs(after, e, &sa);
+		oputs("<code");
+		attr_emit(sa);
+		oputc('>');
+		hprint(code, code + codelen);
+		oputs("</code>");
+		free(sa);
+		return aend - start;
+	}
 }
 
 static const struct { char ch; const char *open, *close; } surround_tags[] = {
@@ -2561,15 +2561,9 @@ dosurround(const char *b, const char *e, int n)
 			continue;
 		}
 		if (*p == '`') { /* skip code spans */
-			int cnt = leadc(p, e, '`');
-			const char *q = p + cnt;
-			while (q < e) {
-				if (*q != '`') { q++; continue; }
-				int r = leadc(q, e, '`');
-				if (r == cnt) { p = q + r - 1; break; }
-				q += r;
-			}
-			if (q >= e) break;
+			const char *q = skip_code_span(p, e);
+			if (!q) break;
+			p = q - 1;
 			continue;
 		}
 		/* stop at ]( — emphasis shouldn't span across link syntax */
@@ -2726,15 +2720,11 @@ altprint(const char *b, const char *e)
 		if (*b == '\\' && b + 1 < e && isasciipunct(b[1])) { b++; aprint(b, b+1); continue; }
 		if (*b == '`') {
 			int cnt = leadc(b, e, '`');
-			const char *q = b + cnt;
-			while (q < e) {
-				if (*q != '`') { q++; continue; }
-				if (leadc(q, e, '`') == cnt) {
-					aprint(b + cnt, q);
-					b = q + cnt - 1;
-					goto next;
-				}
-				q += leadc(q, e, '`');
+			const char *q = skip_code_span(b, e);
+			if (q) {
+				aprint(b + cnt, q - cnt);
+				b = q - 1;
+				continue;
 			}
 		}
 		if (*b == '[') {
@@ -2768,7 +2758,6 @@ altprint(const char *b, const char *e)
 			}
 		}
 		aprint(b, b + 1);
-		next:;
 	}
 }
 
@@ -3130,14 +3119,9 @@ doquote(const char *b, const char *e, int n)
 		char pb, pa;
 		if (*p == '\\' && p + 1 < e) { p++; continue; }
 		if (*p == '`') { /* skip code spans */
-			int cnt = leadc(p, e, '`');
-			const char *q = p + cnt;
-			while (q < e) {
-				if (*q != '`') { q++; continue; }
-				if (leadc(q, e, '`') == cnt) { p = q + cnt - 1; break; }
-				q += leadc(q, e, '`');
-			}
-			if (q >= e) break;
+			const char *q = skip_code_span(p, e);
+			if (!q) break;
+			p = q - 1;
 			continue;
 		}
 		/* an explicitly marked opener is not ours to match */
