@@ -93,33 +93,29 @@ static int footnote_counter;
 static int sections[6], nsections;
 static int in_container;
 static int tight;
-static const char *proc_base;
 
-
-/* Cache for doreplace's `{X` scan: a contiguous range [nc_b, nc_eol)
- * in which no `}` exists before the next `\n` or e. Without this, inputs
- * like `{{{{{...` are O(N^2) — every `{` scans to the next `\n`. */
-static const char *nc_e;
-static const char *nc_b;
-static const char *nc_eol;
-
-/* Cache for doquote's closer scan, indexed 0 for `"` and 1 for `'`: in
- * [q_nc_b, q_nc_e) no delimiter of that kind can close, so an opener
- * there is unmatched without scanning. Without this, `'a 'a 'a ...` is
- * O(N^2) -- every opener walks to e. */
-static const char *q_nc_e[2];
-static const char *q_nc_b[2];
-
-/* Bracket-match table built once per process() call. bm_match[i] is the
- * offset (relative to bm_base) of the `]` matching `[` at bm_base+i with
- * depth-0 escape-aware matching, or -1 if no such match exists. Replaces
- * dolink's per-call O(N) depth walk; without this, inputs like
- * `[[[[...[](` are O(N^2). The state is per-process-call (saved/restored
- * at recursion); the array memory is owned by the current call. */
-static const char *bm_base;
-static const char *bm_end;
-static long *bm_match;
-static long bm_cap;
+/* Scan state belonging to one process() call: the base pointer the inline
+ * parsers measure from, plus three caches that keep pathological inputs
+ * from going quadratic. process() recurses, so each call saves the
+ * enclosing struct, starts from zero, and restores on the way out.
+ *
+ * nc_*      doreplace's `{X` scan: in [nc_b, nc_eol) no `}` occurs before
+ *           the next `\n` or e, so `{{{{{...` does not rescan per `{`.
+ * q_nc_*    doquote's closer scan, indexed 0 for `"` and 1 for `'`: in
+ *           [q_nc_b, q_nc_e) no delimiter of that kind can close, so an
+ *           opener there is unmatched without scanning. Keeps
+ *           `'a 'a 'a ...` from walking to e per opener.
+ * bm_*      bracket-match table: bm_match[i] is the offset of the `]`
+ *           matching the `[` at bm_base+i under depth-0 escape-aware
+ *           matching, or -1. Replaces dolink's per-`[` depth walk, which
+ *           makes `[[[[...[](` quadratic. The array is owned by the call. */
+static struct scan {
+	const char *base;
+	const char *nc_e, *nc_b, *nc_eol;
+	const char *q_nc_e[2], *q_nc_b[2];
+	const char *bm_base, *bm_end;
+	long *bm_match, bm_cap;
+} sc;
 static long *bm_stack;
 static long bm_stack_cap;
 
@@ -209,12 +205,12 @@ static void
 build_bracket_match(const char *b, const char *e)
 {
 	long n, i, top;
-	if (bm_base == b && bm_end == e) return;
+	if (sc.bm_base == b && sc.bm_end == e) return;
 	n = e - b;
-	if (n + 1 > bm_cap) {
-		bm_cap = n + 64;
-		bm_match = realloc(bm_match, bm_cap * sizeof(*bm_match));
-		if (!bm_match) die("malloc");
+	if (n + 1 > sc.bm_cap) {
+		sc.bm_cap = n + 64;
+		sc.bm_match = realloc(sc.bm_match, sc.bm_cap * sizeof(*sc.bm_match));
+		if (!sc.bm_match) die("malloc");
 	}
 	if (n + 1 > bm_stack_cap) {
 		bm_stack_cap = n + 64;
@@ -222,18 +218,18 @@ build_bracket_match(const char *b, const char *e)
 		if (!bm_stack) die("malloc");
 	}
 	top = 0;
-	for (i = 0; i < n; i++) bm_match[i] = -1;
+	for (i = 0; i < n; i++) sc.bm_match[i] = -1;
 	for (i = 0; i < n; i++) {
 		if (b[i] == '\\' && i + 1 < n) { i++; continue; }
 		if (b[i] == '[') {
 			bm_stack[top++] = i;
 		} else if (b[i] == ']' && top > 0) {
 			long j = bm_stack[--top];
-			bm_match[j] = i;
+			sc.bm_match[j] = i;
 		}
 	}
-	bm_base = b;
-	bm_end = e;
+	sc.bm_base = b;
+	sc.bm_end = e;
 }
 
 static void
@@ -2595,10 +2591,10 @@ dosurround(const char *b, const char *e, int n)
 			 * O(N^2) inside dosurround. */
 			{
 				ptrdiff_t idx;
-				build_bracket_match(proc_base, e);
-				idx = p - proc_base;
-				if (idx >= 0 && idx < bm_end - bm_base
-				    && bm_match[idx] < 0)
+				build_bracket_match(sc.base, e);
+				idx = p - sc.base;
+				if (idx >= 0 && idx < sc.bm_end - sc.bm_base
+				    && sc.bm_match[idx] < 0)
 					continue;
 			}
 			/* Quick check: any `](` ahead? If not, this `[` cannot
@@ -2828,14 +2824,14 @@ dolink(const char *b, const char *e, int n)
 	/* Find matching `]` via the precomputed bracket-match table. Without
 	 * this, inputs with many unmatched `[` (e.g. `[[[[...[](`) cause an
 	 * O(N) depth walk per `[`, total O(N^2). */
-	build_bracket_match(proc_base, e);
+	build_bracket_match(sc.base, e);
 	{
-		ptrdiff_t idx = p - proc_base;
+		ptrdiff_t idx = p - sc.base;
 		long mi;
-		if (idx < 0 || idx >= bm_end - bm_base) return 0;
-		mi = bm_match[idx];
+		if (idx < 0 || idx >= sc.bm_end - sc.bm_base) return 0;
+		mi = sc.bm_match[idx];
 		if (mi < 0) return 0;
-		q = proc_base + mi;
+		q = sc.base + mi;
 	}
 
 	/* footnote reference [^label]. The label may span lines and is
@@ -3100,7 +3096,7 @@ doquote(const char *b, const char *e, int n)
 	rq = ci ? "\xe2\x80\x99" : "\xe2\x80\x9d";
 	dflt = ci ? rq : lq;
 
-	before = (d > proc_base) ? d[-1] : 0;
+	before = (d > sc.base) ? d[-1] : 0;
 	after = (d + 1 < e) ? d[1] : 0;
 
 	/* `"}` can only close, and unmatched it takes the right glyph.
@@ -3118,12 +3114,12 @@ doquote(const char *b, const char *e, int n)
 	else if (!ci)
 		can_open = !isws(after);
 	else
-		can_open = !isws(after) && (d == proc_base
+		can_open = !isws(after) && (d == sc.base
 		    || before == ' ' || before == '\t' || before == '\r'
 		    || before == '\n' || before == '"' || before == '\''
 		    || before == '-' || before == '(' || before == '[');
 	if (!can_open) { oputs(dflt); return 1; }
-	if (q_nc_e[ci] == e && d >= q_nc_b[ci]) {
+	if (sc.q_nc_e[ci] == e && d >= sc.q_nc_b[ci]) {
 		oputs(explicit_open ? lq : dflt);
 		return 1 + consumed_open;
 	}
@@ -3149,7 +3145,7 @@ doquote(const char *b, const char *e, int n)
 		if (*p != ch) continue;
 		explicit_close = (p + 1 < e && p[1] == '}');
 		if (!explicit_open != !explicit_close) continue;
-		pb = (p > proc_base) ? p[-1] : 0;
+		pb = (p > sc.base) ? p[-1] : 0;
 		pa = (p + 1 < e) ? p[1] : 0;
 		is_closer = explicit_close || !isws(pb);
 		is_opener = !isws(pa) && (!ci || pb == ' ' || pb == '\t'
@@ -3173,7 +3169,7 @@ doquote(const char *b, const char *e, int n)
 	}
 	/* No closer ahead at all means no later opener needs to look
 	 * either, which keeps `'a 'a 'a ...` from being O(N^2). */
-	if (!sawclose) { q_nc_e[ci] = e; q_nc_b[ci] = d; }
+	if (!sawclose) { sc.q_nc_e[ci] = e; sc.q_nc_b[ci] = d; }
 	oputs(explicit_open ? lq : dflt);
 	return 1 + consumed_open;
 }
@@ -3204,7 +3200,7 @@ doreplace(const char *b, const char *e, int n)
 	    && b[1] != '\'' && b[1] != '"'
 	    && b[1] != '#' && b[1] != '.' && b[1] != '%'
 	    && !isalpha((unsigned char)b[1])) {
-		if (!(nc_e == e && b >= nc_b && b < nc_eol)) {
+		if (!(sc.nc_e == e && b >= sc.nc_b && b < sc.nc_eol)) {
 			const char *q = b + 1;
 			while (q < e && *q != '}' && *q != '\n') q++;
 			if (q < e && *q == '}') {
@@ -3213,9 +3209,9 @@ doreplace(const char *b, const char *e, int n)
 			}
 			/* scan stopped at `\n` or e without finding `}`: cache
 			 * the run so later `{`s on this line short-circuit. */
-			nc_e = e;
-			nc_b = b;
-			nc_eol = q;
+			sc.nc_e = e;
+			sc.nc_b = b;
+			sc.nc_eol = q;
 		}
 	}
 
@@ -3242,7 +3238,7 @@ doreplace(const char *b, const char *e, int n)
 	 * (one space earlier in the same run) already concluded — without
 	 * this, a long run of spaces is O(N^2). */
 	if ((*b == ' ' || *b == '\t') && !n
-	    && !(b > proc_base && (b[-1] == ' ' || b[-1] == '\t'))) {
+	    && !(b > sc.base && (b[-1] == ' ' || b[-1] == '\t'))) {
 		const char *q = b;
 		while (q < e && (*q == ' ' || *q == '\t')) q++;
 		if (q < e && *q == '\\') {
@@ -3267,29 +3263,12 @@ static void
 process(const char *b, const char *e, int newblock)
 {
 	const char *p;
-	const char *save_base = proc_base;
-	const char *save_q_nc_e0 = q_nc_e[0], *save_q_nc_b0 = q_nc_b[0];
-	const char *save_q_nc_e1 = q_nc_e[1], *save_q_nc_b1 = q_nc_b[1];
-	const char *save_nc_e = nc_e;
-	const char *save_nc_b = nc_b;
-	const char *save_nc_eol = nc_eol;
-	const char *save_bm_base = bm_base;
-	const char *save_bm_end = bm_end;
-	long *save_bm_match = bm_match;
-	long save_bm_cap = bm_cap;
+	struct scan save = sc;
 	int affected;
 	int allow_block = newblock;
 
-	proc_base = b;
-	q_nc_e[0] = NULL; q_nc_b[0] = NULL;
-	q_nc_e[1] = NULL; q_nc_b[1] = NULL;
-	nc_e = NULL;
-	nc_b = NULL;
-	nc_eol = NULL;
-	bm_base = NULL;
-	bm_end = NULL;
-	bm_match = NULL;
-	bm_cap = 0;
+	memset(&sc, 0, sizeof sc);
+	sc.base = b;
 	for (p = b; p < e; ) {
 		if (newblock) {
 			int had_blank = 0;
@@ -3298,21 +3277,8 @@ process(const char *b, const char *e, int newblock)
 				if (!isblankline(p, le)) break;
 				had_blank = 1;
 				p = le;
-				if (p >= e) {
-					proc_base = save_base;
-					q_nc_e[0] = save_q_nc_e0; q_nc_b[0] = save_q_nc_b0;
-					q_nc_e[1] = save_q_nc_e1; q_nc_b[1] = save_q_nc_b1;
-					nc_e = save_nc_e;
-					nc_b = save_nc_b;
-					nc_eol = save_nc_eol;
-					free(bm_match);
-					bm_base = save_bm_base;
-					bm_end = save_bm_end;
-					bm_match = save_bm_match;
-					bm_cap = save_bm_cap;
-					return;
-				}
 			}
+			if (p >= e) break;	/* trailing blank lines only */
 			if (had_blank && has_pending())
 				clear_pending();
 		}
@@ -3411,17 +3377,8 @@ process(const char *b, const char *e, int newblock)
 		else
 			newblock = affected < 0;
 	}
-	proc_base = save_base;
-	q_nc_e[0] = save_q_nc_e0; q_nc_b[0] = save_q_nc_b0;
-	q_nc_e[1] = save_q_nc_e1; q_nc_b[1] = save_q_nc_b1;
-	nc_e = save_nc_e;
-	nc_b = save_nc_b;
-	nc_eol = save_nc_eol;
-	free(bm_match);
-	bm_base = save_bm_base;
-	bm_end = save_bm_end;
-	bm_match = save_bm_match;
-	bm_cap = save_bm_cap;
+	free(sc.bm_match);
+	sc = save;
 }
 
 static char *urlbuf;
@@ -3773,16 +3730,9 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	nsections = 0;
 	in_container = 0;
 	tight = 0;
-	proc_base = NULL;
 	id_ht = NULL; id_ht_sz = 0; id_ht_cnt = 0;
 	urlbuf = NULL; urlbuflen = 0; cap_url = 0;
-	nc_e = NULL;
-	nc_b = NULL;
-	nc_eol = NULL;
-	bm_base = NULL;
-	bm_end = NULL;
-	bm_match = NULL;
-	bm_cap = 0;
+	memset(&sc, 0, sizeof sc);	/* process() re-zeroes it per call */
 	bm_stack = NULL;
 	bm_stack_cap = 0;
 
