@@ -1533,6 +1533,11 @@ dothematicbreak(const char *b, const char *e, int n)
 	return -(eol(b, e) - b);
 }
 
+/* A list marker: its kind, the number it stands for, the punctuation
+ * that delimits it, and -- for bullets -- the character itself. Two
+ * markers start the same list when these agree. */
+struct marker { int style, start; char delim, mch; };
+
 static int
 roman_val(const char *b, const char *e, int upper)
 {
@@ -1572,22 +1577,23 @@ roman_val(const char *b, const char *e, int upper)
 	return val > 0 ? val : -1;
 }
 
-/* Returns offset past marker+space, or 0.
+/* Returns offset past marker+space, or 0, describing the marker in *m.
  * style: 0=bullet 1=decimal 2=lower-alpha 3=upper-alpha 4=lower-roman 5=upper-roman */
 static int
-scan_marker(const char *p, const char *e, int *style, int *start,
-    char *delim, char *mch)
+scan_marker(const char *p, const char *e, struct marker *m)
 {
 	const char *q, *s = p;
 	int num;
 
+	m->style = m->start = 0;
+	m->delim = m->mch = 0;
 	if (p >= e) return 0;
 
 	/* bullet */
 	if (*p == '-' || *p == '*' || *p == '+') {
 		if (p + 1 >= e || (p[1] != ' ' && p[1] != '\t' && p[1] != '\n'))
 			return 0;
-		*style = 0; *mch = *p; *delim = *p;
+		m->style = 0; m->mch = *p; m->delim = *p;
 		p++;
 		if (p < e && *p == ' ') p++;
 		return p - s;
@@ -1609,7 +1615,7 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 				num = num * 10 + (*r++ - '0');
 			}
 			if (r == q) {
-				*style = 1; *start = num; *delim = '(';
+				m->style = 1; m->start = num; m->delim = '(';
 				q += 2; /* past ) and space */
 				if (q[-1] != ' ' && q[-1] != '\n') q--;
 				return q - s;
@@ -1617,9 +1623,9 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 		}
 		/* single letter: alpha first */
 		if (isalpha((unsigned char)*p) && q == p + 1) {
-			*style = isupper((unsigned char)*p) ? 3 : 2;
-			*start = tolower((unsigned char)*p) - 'a' + 1;
-			*delim = '(';
+			m->style = isupper((unsigned char)*p) ? 3 : 2;
+			m->start = tolower((unsigned char)*p) - 'a' + 1;
+			m->delim = '(';
 			q++;
 			if (q < e && *q == ' ') q++;
 			return q - s;
@@ -1627,9 +1633,9 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 		/* multi-letter: try roman */
 		num = roman_val(p, q, isupper((unsigned char)*p));
 		if (num > 0) {
-			*style = isupper((unsigned char)*p) ? 5 : 4;
-			*start = num;
-			*delim = '(';
+			m->style = isupper((unsigned char)*p) ? 5 : 4;
+			m->start = num;
+			m->delim = '(';
 			q++;
 			if (q < e && *q == ' ') q++;
 			return q - s;
@@ -1645,10 +1651,10 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 			num = num * 10 + (*p++ - '0');
 		}
 		if (p >= e || (*p != '.' && *p != ')')) return 0;
-		*delim = *p++;
+		m->delim = *p++;
 		if (p >= e || (*p != ' ' && *p != '\n')) return 0;
 		if (*p == ' ') p++;
-		*style = 1; *start = num;
+		m->style = 1; m->start = num;
 		return p - s;
 	}
 
@@ -1660,18 +1666,18 @@ scan_marker(const char *p, const char *e, int *style, int *start,
 		if (q + 1 >= e || (q[1] != ' ' && q[1] != '\n')) return 0;
 		/* single letter: try alpha first */
 		if (q == p + 1) {
-			*style = isupper((unsigned char)*p) ? 3 : 2;
-			*start = tolower((unsigned char)*p) - 'a' + 1;
-			*delim = *q++;
+			m->style = isupper((unsigned char)*p) ? 3 : 2;
+			m->start = tolower((unsigned char)*p) - 'a' + 1;
+			m->delim = *q++;
 			if (q < e && *q == ' ') q++;
 			return q - s;
 		}
 		/* multi-letter: try roman */
 		num = roman_val(p, q, isupper((unsigned char)*p));
 		if (num > 0) {
-			*style = isupper((unsigned char)*p) ? 5 : 4;
-			*start = num;
-			*delim = *q++;
+			m->style = isupper((unsigned char)*p) ? 5 : 4;
+			m->start = num;
+			m->delim = *q++;
 			if (q < e && *q == ' ') q++;
 			return q - s;
 		}
@@ -1691,10 +1697,9 @@ item_has_inner_blank(const char *buf, int len)
 		if (isblankline(sp2, le)) {
 			const char *after = skip_blanks(le, be);
 			if (after < be) {
-				int st2;
-				char d2, m2;
+				struct marker it;
 				const char *np = after + spaces(after, be);
-				if (!scan_marker(np, be, &st2, &(int){0}, &d2, &m2))
+				if (!scan_marker(np, be, &it))
 					return 1;
 			}
 			break;
@@ -1712,8 +1717,7 @@ dolist(const char *b, const char *e, int n)
 	const char *p, *q, *line;
 	char *buf;
 	int i, sp, indent, loose, had_blank;
-	int style, start_num;
-	char delim, mch;
+	struct marker lm;	/* the marker this list is built from */
 
 	if (!n) return 0;
 	p = b;
@@ -1721,33 +1725,32 @@ dolist(const char *b, const char *e, int n)
 	if (sp > 3) return 0;
 	p += sp;
 
-	indent = scan_marker(p, e, &style, &start_num, &delim, &mch);
+	indent = scan_marker(p, e, &lm);
 	if (!indent) return 0;
 	indent += sp;
 
 	/* disambiguate alpha vs roman: check second item */
-	if (style == 2 || style == 3) {
+	if (lm.style == 2 || lm.style == 3) {
 		/* single-letter alpha — could be roman? */
 		const char *p2 = p + indent - sp;
 		const char *line2;
-		int rval = roman_val(p, p + 1, style == 3);
+		int rval = roman_val(p, p + 1, lm.style == 3);
 		if (rval > 0) {
 			line2 = skip_blanks(eol(b, e), e);
 			if (line2 < e) {
-				int st2, sn2;
-				char d2, m2;
+				struct marker it;
 				p2 = line2 + spaces(line2, e);
-				if (scan_marker(p2, e, &st2, &sn2, &d2, &m2)) {
-					if ((st2 == 4 || st2 == 5) && d2 == delim) {
+				if (scan_marker(p2, e, &it)) {
+					if ((it.style == 4 || it.style == 5) && it.delim == lm.delim) {
 						/* second item is roman — switch */
-						style = (style == 2) ? 4 : 5;
-						start_num = rval;
-					} else if (st2 == style && d2 == delim) {
+						lm.style = (lm.style == 2) ? 4 : 5;
+						lm.start = rval;
+					} else if (it.style == lm.style && it.delim == lm.delim) {
 						/* second item is also alpha, check if repeated roman */
-						int rval2 = roman_val(p2, p2 + 1, style == 3);
+						int rval2 = roman_val(p2, p2 + 1, lm.style == 3);
 						if (rval2 == rval) {
-							style = (style == 2) ? 4 : 5;
-							start_num = rval;
+							lm.style = (lm.style == 2) ? 4 : 5;
+							lm.start = rval;
 						}
 					}
 				}
@@ -1757,14 +1760,14 @@ dolist(const char *b, const char *e, int n)
 
 	/* detect task list: first item starts with [ ] or [x] */
 	int is_task = 0;
-	if (style == 0) {
+	if (lm.style == 0) {
 		const char *tc = p + indent - sp;
 		if (tc + 2 < e && tc[0] == '[' && (tc[1] == ' ' || tc[1] == 'x')
 		    && tc[2] == ']' && (tc + 3 >= e || tc[3] == ' ' || tc[3] == '\n'))
 			is_task = 1;
 	}
 
-	if (style == 0) {
+	if (lm.style == 0) {
 		if (is_task)
 			attr_put(&pending_attrs, &cap_pattr, "class",
 			    "task-list", ATTR_PREPEND);
@@ -1776,8 +1779,8 @@ dolist(const char *b, const char *e, int n)
 		oputs(">\n");
 	} else {
 		oputs("<ol");
-		if (start_num != 1) oprintf(" start=\"%d\"", start_num);
-		oputs(typattr[style]);
+		if (lm.start != 1) oprintf(" start=\"%d\"", lm.start);
+		oputs(typattr[lm.style]);
 		emit_pending();
 		oputs(">\n");
 	}
@@ -1804,9 +1807,8 @@ dolist(const char *b, const char *e, int n)
 				 * (blank after deeper content is just a
 				 * sub-list ending, not inter-item blank) */
 				if (lsp == sp && prev_at_top) {
-					int st2; char d2, m2;
-					if (scan_marker(nb + lsp, e, &st2,
-					    &(int){0}, &d2, &m2))
+					struct marker it;
+					if (scan_marker(nb + lsp, e, &it))
 						loose = 1;
 				}
 				/* blank followed by indented non-marker
@@ -1814,9 +1816,8 @@ dolist(const char *b, const char *e, int n)
 				 * (but not if followed by a sub-list marker,
 				 * which is just sub-content) */
 				if (lsp > sp && prev_at_top) {
-					int st2; char d2, m2;
-					if (!scan_marker(nb + lsp, e, &st2,
-					    &(int){0}, &d2, &m2))
+					struct marker it;
+					if (!scan_marker(nb + lsp, e, &it))
 						loose = 1;
 				}
 				scan = nb;
@@ -1826,13 +1827,12 @@ dolist(const char *b, const char *e, int n)
 			{
 				int lsp = spaces(scan, e);
 				if (lsp == sp) {
-					int st2; char d2, m2;
-					if (!scan_marker(scan + lsp, e, &st2,
-					    &(int){0}, &d2, &m2))
+					struct marker it;
+					if (!scan_marker(scan + lsp, e, &it))
 						break; /* non-marker: list ended */
-					if (style == 0 ?
-					    (st2 != 0 || m2 != mch) :
-					    (d2 != delim))
+					if (lm.style == 0 ?
+					    (it.style != 0 || it.mch != lm.mch) :
+					    (it.delim != lm.delim))
 						break;
 					prev_at_top = 1;
 				} else {
@@ -1853,21 +1853,20 @@ dolist(const char *b, const char *e, int n)
 		item_sp = spaces(line, e);
 		p = line + item_sp;
 		{
-			int st2;
-			char d2, m2;
-			item_mw = scan_marker(p, e, &st2, &(int){0}, &d2, &m2);
+			struct marker it;
+			item_mw = scan_marker(p, e, &it);
 			if (!item_mw) break;
-			if (style == 0) { if (st2 != 0 || m2 != mch) break; }
-			else if (d2 != delim) break;
-			else if (st2 != style) {
+			if (lm.style == 0) { if (it.style != 0 || it.mch != lm.mch) break; }
+			else if (it.delim != lm.delim) break;
+			else if (it.style != lm.style) {
 				int compat = 0;
-				if ((style == 4 && st2 == 2) || (style == 5 && st2 == 3)) {
+				if ((lm.style == 4 && it.style == 2) || (lm.style == 5 && it.style == 3)) {
 					/* roman list, alpha item: only if char is a roman digit */
-					const char *rchars = (style == 5) ? "IVXLCDM" : "ivxlcdm";
+					const char *rchars = (lm.style == 5) ? "IVXLCDM" : "ivxlcdm";
 					if (strchr(rchars, p[p[0] == '(' ? 1 : 0]))
 						compat = 1;
 				}
-				if ((style == 2 && st2 == 4) || (style == 3 && st2 == 5))
+				if ((lm.style == 2 && it.style == 4) || (lm.style == 3 && it.style == 5))
 					compat = 1;
 				if (!compat) break;
 			}
@@ -1902,15 +1901,14 @@ dolist(const char *b, const char *e, int n)
 			}
 			/* at or before marker column */
 			if (sp == marker_col) {
-				int st2;
-				char d2, m2;
-				if (scan_marker(line + sp, e, &st2, &(int){0}, &d2, &m2)) {
+				struct marker it;
+				if (scan_marker(line + sp, e, &it)) {
 					/* sibling marker → new item */
-					if (style == 0 && st2 == 0 && m2 == mch) break;
-					if (style != 0 && d2 == delim &&
-					    (st2 == style ||
-					    (style >= 4 && st2 == style - 2) ||
-					    (style <= 3 && st2 == style + 2)))
+					if (lm.style == 0 && it.style == 0 && it.mch == lm.mch) break;
+					if (lm.style != 0 && it.delim == lm.delim &&
+					    (it.style == lm.style ||
+					    (lm.style >= 4 && it.style == lm.style - 2) ||
+					    (lm.style <= 3 && it.style == lm.style + 2)))
 						break;
 					/* any other marker without preceding blank → end */
 					if (!had_blank) break;
@@ -1941,11 +1939,9 @@ dolist(const char *b, const char *e, int n)
 					while (ls > buf && ls[-1] != '\n') ls--;
 					int preceded_by_blank = (ls >= buf + 2
 					    && ls[-1] == '\n' && ls[-2] == '\n');
-					int st2;
-					char d2, m2;
+					struct marker it;
 					if (preceded_by_blank && scan_marker(
-					    ls + spaces(ls, lb), lb,
-					    &st2, &(int){0}, &d2, &m2)) {
+					    ls + spaces(ls, lb), lb, &it)) {
 						/* last content is sub-list: lazy OK */
 						q = eol(line, e);
 						PUSHRANGE(buf, i, line, q - line);
@@ -1966,21 +1962,19 @@ dolist(const char *b, const char *e, int n)
 				const char *lb = buf + i - 2;
 				while (lb > buf && lb[-1] != '\n') lb--;
 				{
-					int st2;
-					char d2, m2;
+					struct marker it;
 					const char *np = lb + spaces(lb, buf + i);
-					if (scan_marker(np, buf + i, &st2, &(int){0}, &d2, &m2))
+					if (scan_marker(np, buf + i, &it))
 						saw_blank = 0;
 				}
 			}
 			if (saw_blank || (line < e && isblankline(line, eol(line, e)))) {
 				const char *lp = skip_blanks(line, e);
 				if (lp < e) {
-					int st2;
-					char d2, m2;
+					struct marker it;
 					const char *np = lp + spaces(lp, e);
 					if (spaces(lp, e) == marker_col
-					    && scan_marker(np, e, &st2, &(int){0}, &d2, &m2))
+					    && scan_marker(np, e, &it))
 						loose = 1;
 				}
 				line = lp;
@@ -2049,7 +2043,7 @@ dolist(const char *b, const char *e, int n)
 	}
 	}
 
-	oputs(style == 0 ? "</ul>\n" : "</ol>\n");
+	oputs(lm.style == 0 ? "</ul>\n" : "</ol>\n");
 	return -(line - b);
 }
 
