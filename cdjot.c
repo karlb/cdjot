@@ -1547,43 +1547,34 @@ dothematicbreak(const char *b, const char *e, int n)
  * markers start the same list when these agree. */
 struct marker { int style, start; char delim, mch; };
 
+/* Value of one roman digit, in the case `upper` selects, or 0. */
+static int
+roman_digit(char c, int upper)
+{
+	static const int val[] = { 1, 5, 10, 50, 100, 500, 1000 };
+	const char *digits = upper ? "IVXLCDM" : "ivxlcdm";
+	const char *p = c ? strchr(digits, c) : NULL;
+
+	return p ? val[p - digits] : 0;
+}
+
+/* Value of the roman numeral in [b, e), or -1 if it is not one. Read
+ * right to left, a digit smaller than the one after it subtracts, which
+ * is what makes `ix` nine. Non-canonical spellings count: djot.js takes
+ * any run of roman letters as a marker, so `il.` opens a list at 49. */
 static int
 roman_val(const char *b, const char *e, int upper)
 {
-	static const struct { const char *s; int v; } rtab[] = {
-		{"m",1000},{"cm",900},{"d",500},{"cd",400},{"c",100},{"xc",90},
-		{"l",50},{"xl",40},{"x",10},{"ix",9},{"v",5},{"iv",4},{"i",1}
-	};
-	int val = 0, prev = 10000;
-	const char *p = b;
-	unsigned int i;
+	int total = 0, prev = 0;
 
-	if (p >= e || !isalpha((unsigned char)*p)) return -1;
-	while (p < e) {
-		int found = 0;
-		for (i = 0; i < LEN(rtab); i++) {
-			int l = strlen(rtab[i].s);
-			if (p + l <= e) {
-				int match;
-				if (upper) {
-					match = (l == 1) ? (toupper((unsigned char)rtab[i].s[0]) == *p)
-					    : (toupper((unsigned char)rtab[i].s[0]) == p[0]
-					    && toupper((unsigned char)rtab[i].s[1]) == p[1]);
-				} else {
-					match = !strncmp(p, rtab[i].s, l);
-				}
-				if (match && rtab[i].v <= prev) {
-					val += rtab[i].v;
-					prev = rtab[i].v;
-					p += l;
-					found = 1;
-					break;
-				}
-			}
-		}
-		if (!found) return -1;
+	if (b >= e) return -1;
+	while (e > b) {
+		int n = roman_digit(*--e, upper);
+		if (!n) return -1;
+		total += n < prev ? -n : n;
+		prev = n;
 	}
-	return val > 0 ? val : -1;
+	return total > 0 ? total : -1;
 }
 
 /* Returns offset past marker+space, or 0, describing the marker in *m.

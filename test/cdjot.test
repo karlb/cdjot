@@ -63,6 +63,33 @@ stopped at the newline and left the braces as text. Upstream candidate.
 <p><a href="/u" class="x y">a</a></p>
 ```
 
+A roman numeral marker is any run of roman letters, canonical or not:
+djot.js recognises the run with a character-class regex and converts it
+by the subtraction rule, so `il.` is 49 and `iiv.` is 5. cdjot used to
+match a greedy longest-prefix table that also demanded non-increasing
+digit values, which rejected both and left the line a paragraph.
+Upstream candidate: every upstream roman case is canonical.
+
+```
+il. a
+.
+<ol start="49" type="i">
+<li>
+a
+</li>
+</ol>
+```
+
+```
+iiv. a
+.
+<ol start="5" type="i">
+<li>
+a
+</li>
+</ol>
+```
+
 A verbatim span is closed only by a backtick run of its own length, so
 an inner run of a different length belongs to the content. Every parser
 that scans across a verbatim span has to skip whole runs to agree with
