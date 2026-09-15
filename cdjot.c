@@ -1485,36 +1485,28 @@ docodefence(const char *b, const char *e, int n)
 		/* strip spaces from raw format */
 		while (rawfmtlen > 0 && rawfmt[rawfmtlen-1] == ' ') rawfmtlen--;
 
-		line = p;
-		while (line < e) {
-			q = line;
-			int s = spaces(q, e);
-			q += s;
-			int cl = leadc(q, e, fch);
+		/* find the closing fence; unclosed means the body runs to e */
+		const char *body_end = e, *next = e;
+		for (line = p; line < e; line = eol(line, e)) {
+			int cl;
+			q = line + spaces(line, e);
+			cl = leadc(q, e, fch);
 			if (cl >= flen && isblankline(q + cl, eol(line, e))) {
-				if (is_raw && rawfmtlen == 4
-				    && !memcmp(rawfmt, "html", 4)) {
-					owrite(p, line - p);
-				} else if (!is_raw) {
-					emit_code_open(info, infoend);
-					emit_fence_lines(p, line, indent);
-					oputs("</code></pre>\n");
-				}
-				/* other raw formats: silently drop */
-				return -(eol(line, e) - b);
+				body_end = line;
+				next = eol(line, e);
+				break;
 			}
-			line = eol(line, e);
 		}
-		/* unclosed: treat rest as code */
-		if (is_raw && rawfmtlen == 4 && !memcmp(rawfmt, "html", 4)) {
-			owrite(p, e - p);
-		} else if (!is_raw) {
+		if (!is_raw) {
 			emit_code_open(info, infoend);
-			emit_fence_lines(p, e, indent);
+			emit_fence_lines(p, body_end, indent);
 			oputs("</code></pre>\n");
+		} else if (rawfmtlen == 4 && !memcmp(rawfmt, "html", 4)) {
+			owrite(p, body_end - p);
 		}
+		/* other raw formats: silently drop */
+		return -(next - b);
 	}
-	return -(e - b);
 }
 
 static int
@@ -2413,24 +2405,37 @@ docode(const char *b, const char *e, int n)
 	}
 }
 
-static const struct { char ch; const char *open, *close; } surround_tags[] = {
-	{'_', "<em>", "</em>"}, {'*', "<strong>", "</strong>"},
-	{'~', "<sub>", "</sub>"}, {'^', "<sup>", "</sup>"},
-	{'+', "<ins>", "</ins>"}, {'-', "<del>", "</del>"},
-	{'=', "<mark>", "</mark>"},
+static const struct { char ch; const char *tag; } surround_tags[] = {
+	{'_', "em"}, {'*', "strong"}, {'~', "sub"}, {'^', "sup"},
+	{'+', "ins"}, {'-', "del"}, {'=', "mark"},
 };
 
-static void
-surround_lookup(char ch, const char **otag, const char **ctag)
+static const char *
+surround_tag(char ch)
 {
 	unsigned int i;
 	for (i = 0; i < LEN(surround_tags); i++)
-		if (surround_tags[i].ch == ch) {
-			*otag = surround_tags[i].open;
-			*ctag = surround_tags[i].close;
-			return;
-		}
-	*otag = "<em>"; *ctag = "</em>";
+		if (surround_tags[i].ch == ch)
+			return surround_tags[i].tag;
+	return "em";	/* unreachable: dosurround rejects other chars */
+}
+
+/* <tag attrs> and </tag>; attrs may be NULL, which emits none */
+static void
+open_tag(const char *tag, const char *attrs)
+{
+	oputc('<');
+	oputs(tag);
+	attr_emit(attrs);
+	oputc('>');
+}
+
+static void
+close_tag(const char *tag)
+{
+	oputs("</");
+	oputs(tag);
+	oputc('>');
 }
 
 static int
@@ -2475,25 +2480,17 @@ dosurround(const char *b, const char *e, int n)
 				if (crun >= run) {
 					char bb = (rp > b + run) ? rp[-1] : 0;
 					if (!isws(bb) && rp > b + run) {
-						const char *ot, *ct;
-						int j, otlen;
+						const char *tag = surround_tag(ch);
 						char *sa;
 						const char *end;
-						surround_lookup(ch, &ot, &ct);
+						int j;
 						end = scan_inline_attrs(rp + run, e, &sa);
-						otlen = strlen(ot);
-						for (j = 0; j < run; j++) {
-							if (j == 0 && end > rp + run) {
-								owrite(ot, otlen - 1);
-								attr_emit(sa);
-								oputc('>');
-							} else {
-								oputs(ot);
-							}
-						}
+						/* attributes go on the outermost tag */
+						for (j = 0; j < run; j++)
+							open_tag(tag, j ? NULL : sa);
 						process(b + run, rp, 0);
 						for (j = 0; j < run; j++)
-							oputs(ct);
+							close_tag(tag);
 						free(sa);
 						return end - b;
 					}
@@ -2654,22 +2651,14 @@ dosurround(const char *b, const char *e, int n)
 				if (!explicit_open && !seen_nondelim) continue;
 				stop = p;
 				{
-					const char *otag, *ctag;
+					const char *tag = surround_tag(ch);
 					char *sa;
-					const char *after_close, *aend;
-					surround_lookup(ch, &otag, &ctag);
-					after_close = stop + 1 + (explicit_close ? 1 : 0);
-					aend = scan_inline_attrs(after_close, e, &sa);
-					if (aend > after_close) {
-						int otlen = strlen(otag);
-						owrite(otag, otlen - 1);
-						attr_emit(sa);
-						oputc('>');
-					} else {
-						oputs(otag);
-					}
+					const char *aend = scan_inline_attrs(
+					    stop + 1 + (explicit_close ? 1 : 0),
+					    e, &sa);
+					open_tag(tag, sa);
 					process(start, stop, 0);
-					oputs(ctag);
+					close_tag(tag);
 					free(sa);
 					return aend - b;
 				}
