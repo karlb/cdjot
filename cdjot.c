@@ -14,30 +14,14 @@
 #include "cdjot.h"
 
 #define LEN(x) (sizeof(x)/sizeof(x[0]))
-#define ADDC(b,i) do { if ((i) % BUFSIZ == 0) { \
-	b = realloc(b, ((i) + BUFSIZ)); if (!b) die("malloc"); } } while(0); b[i]
-#define PUSH(b,i,ch) do { ADDC(b,i) = (ch); (i)++; } while(0)
-/* Batch append: copy n bytes from src into buffer b at index *ip, growing as
- * needed in BUFSIZ-aligned chunks (matching ADDC's invariant so subsequent
- * ADDC/PUSH calls remain correct). Replaces per-byte PUSH loops in block
- * parsers' line-collection inner loops. */
-#define PUSHRANGE(b,i,src,n) do { \
-	int _n = (n); \
-	if (_n > 0) { \
-		int _ni = (i) + _n; \
-		int _oc = (i) == 0 ? 0 : (((i) - 1) / BUFSIZ + 1) * BUFSIZ; \
-		int _nc = (_ni - 1) / BUFSIZ + 1; _nc *= BUFSIZ; \
-		if (_nc != _oc) { \
-			(b) = realloc((b), _nc); \
-			if (!(b)) die("malloc"); \
-		} \
-		memcpy((b) + (i), (src), _n); \
-		(i) = _ni; \
-	} \
-} while (0)
-#define GROWBUF(b,len,cap,need) do { if ((len)+(need)>(cap)) { \
-	(cap) = ((cap)+(need)) * 2; (b) = realloc((b), (cap)); \
-	if (!(b)) die("malloc"); } } while(0)
+
+/* A growable byte buffer. Zero-initialize, append, then free b.s. The
+ * block parsers collect their content into one of these and hand it to
+ * process(); buf_end() NUL-terminates without counting the terminator,
+ * so b.s and b.len stay a usable range. */
+struct buf { char *s; int len, cap; };
+
+/* Grow a typed array to hold n+1 elements */
 #define GROWA(arr,n,cap) do { if ((n) >= (cap)) { \
 	(cap) = (cap) ? (cap) * 2 : 16; \
 	(arr) = realloc((arr), (cap) * sizeof(*(arr))); \
@@ -137,6 +121,39 @@ die(const char *msg)
 {
 	fprintf(stderr, "cdjot: %s\n", msg);
 	exit(1);
+}
+
+/* out-of-line slow path, like obuf_grow's */
+static void
+buf_grow(struct buf *b, int need)
+{
+	b->cap = (b->cap + need) * 2;
+	b->s = realloc(b->s, b->cap);
+	if (!b->s) die("malloc");
+}
+
+static inline void
+buf_add(struct buf *b, const char *s, int n)
+{
+	if (n <= 0) return;
+	if (b->len + n > b->cap) buf_grow(b, n);
+	memcpy(b->s + b->len, s, n);
+	b->len += n;
+}
+
+static inline void
+buf_addc(struct buf *b, char c)
+{
+	if (b->len + 1 > b->cap) buf_grow(b, 1);
+	b->s[b->len++] = c;
+}
+
+/* NUL-terminate; the terminator is not counted in len */
+static void
+buf_end(struct buf *b)
+{
+	if (b->len + 1 > b->cap) buf_grow(b, 1);
+	b->s[b->len] = '\0';
 }
 
 static void
@@ -989,8 +1006,7 @@ static int
 dodeflist(const char *b, const char *e, int n)
 {
 	const char *p, *line;
-	char *buf;
-	int i;
+	struct buf bf;
 
 	if (!n) return 0;
 	p = b;
@@ -1012,8 +1028,7 @@ dodeflist(const char *b, const char *e, int n)
 		/* collect term: first para, continuation lines indented by 1+ space
 		 * If the term line starts a code fence, treat term as empty
 		 * and include the fence in the definition */
-		buf = NULL;
-		i = 0;
+		memset(&bf, 0, sizeof bf);
 		int term_is_fence = 0;
 		{
 			const char *tp = p;
@@ -1022,7 +1037,7 @@ dodeflist(const char *b, const char *e, int n)
 				term_is_fence = 1;
 			if (!term_is_fence) {
 				const char *le = trim_end(p, eol(line, e));
-				PUSHRANGE(buf, i, p, le - p);
+				buf_add(&bf, p, le - p);
 			}
 		}
 		line = eol(line, e);
@@ -1033,16 +1048,16 @@ dodeflist(const char *b, const char *e, int n)
 			if (*p == ':' && p + 1 < e && (p[1] == ' ' || p[1] == '\n'))
 				break;
 			p += (sp > 1) ? 1 : sp;
-			if (i > 0) PUSH(buf, i, '\n');
+			if (bf.len > 0) buf_addc(&bf, '\n');
 			const char *le = trim_end(p, eol(line, e));
-			PUSHRANGE(buf, i, p, le - p);
+			buf_add(&bf, p, le - p);
 			line = eol(line, e);
 		}
-		ADDC(buf, i) = '\0';
+		buf_end(&bf);
 		oputs("<dt>");
-		process(buf, buf + i, 0);
+		process(bf.s, bf.s + bf.len, 0);
 		oputs("</dt>\n");
-		free(buf);
+		free(bf.s);
 
 		/* skip blank lines */
 		if (!term_is_fence)
@@ -1050,16 +1065,15 @@ dodeflist(const char *b, const char *e, int n)
 				line = eol(line, e);
 
 		/* collect definition: indented content (2+ spaces) */
-		buf = NULL;
-		i = 0;
+		memset(&bf, 0, sizeof bf);
 		/* if term was a fence, include the fence line in definition */
 		if (term_is_fence) {
 			const char *fle = eol(p, e);
-			PUSHRANGE(buf, i, p, fle - p);
+			buf_add(&bf, p, fle - p);
 		}
 		while (line < e) {
 			if (isblankline(line, eol(line, e))) {
-				PUSH(buf, i, '\n');
+				buf_addc(&bf, '\n');
 				line = eol(line, e);
 				continue;
 			}
@@ -1068,23 +1082,23 @@ dodeflist(const char *b, const char *e, int n)
 			{
 				const char *le = eol(line, e);
 				int strip = (sp > 2) ? 2 : sp;
-				PUSHRANGE(buf, i, line + strip, le - (line + strip));
+				buf_add(&bf, line + strip, le - (line + strip));
 			}
 			line = eol(line, e);
 		}
-		while (i > 0 && buf[i-1] == '\n') i--;
-		ADDC(buf, i) = '\0';
+		while (bf.len > 0 && bf.s[bf.len-1] == '\n') bf.len--;
+		buf_end(&bf);
 
 		{
 			int save = in_container;
 			in_container = 1;
 			oputs("<dd>\n");
-			if (i > 0)
-				process(buf, buf + i, 1);
+			if (bf.len > 0)
+				process(bf.s, bf.s + bf.len, 1);
 			oputs("</dd>\n");
 			in_container = save;
 		}
-		free(buf);
+		free(bf.s);
 
 		/* skip blank lines between items */
 		while (line < e && isblankline(line, eol(line, e)))
@@ -1100,8 +1114,7 @@ dodiv(const char *b, const char *e, int n)
 {
 	const char *p, *q, *line, *cls, *clsend;
 	int sp, flen;
-	char *buf;
-	int i;
+	struct buf bf;
 
 	if (!n) return 0;
 	p = b;
@@ -1120,8 +1133,7 @@ dodiv(const char *b, const char *e, int n)
 	if (p < e) p++; /* skip \n */
 
 	/* collect content until closing fence, skipping code fences */
-	buf = NULL;
-	i = 0;
+	memset(&bf, 0, sizeof bf);
 	line = p;
 	{
 	int in_code = 0;
@@ -1150,13 +1162,13 @@ dodiv(const char *b, const char *e, int n)
 		}
 		{
 			const char *le = eol(line, e);
-			PUSHRANGE(buf, i, line, le - line);
+			buf_add(&bf, line, le - line);
 		}
 		line = eol(line, e);
 	}
 	}
 done:
-	ADDC(buf, i) = '\0';
+	buf_end(&bf);
 	{
 		int save = in_container;
 		in_container = 1;
@@ -1174,11 +1186,11 @@ done:
 		attr_emit(pending_attrs);
 		oputs(">\n");
 		clear_pending();
-		process(buf, buf + i, 1);
+		process(bf.s, bf.s + bf.len, 1);
 		oputs("</div>\n");
 		in_container = save;
 	}
-	free(buf);
+	free(bf.s);
 	return -(line - b);
 }
 
@@ -1299,8 +1311,7 @@ doheading(const char *b, const char *e, int n)
 {
 	const char *p, *q, *content, *cend, *line;
 	int sp, level, hl;
-	char *buf;
-	int blen;
+	struct buf bf;
 
 	if (!n) return 0;
 	p = b;
@@ -1315,12 +1326,11 @@ doheading(const char *b, const char *e, int n)
 	content = p;
 	cend = trim_end(content, eol(p, e));
 
-	buf = NULL;
-	blen = 0;
+	memset(&bf, 0, sizeof bf);
 	while (content < cend && (*content == ' ' || *content == '\t'
 	    || *content == '\n' || *content == '\r'))
 		content++;
-	PUSHRANGE(buf, blen, content, cend - content);
+	buf_add(&bf, content, cend - content);
 	line = eol(b, e);
 	while (line < e && !isblankline(line, eol(line, e))) {
 		const char *lp = line;
@@ -1339,22 +1349,22 @@ doheading(const char *b, const char *e, int n)
 		}
 		q = trim_end(lp, eol(line, e));
 		if (q > lp) {
-			if (blen > 0) PUSH(buf, blen, '\n');
-			PUSHRANGE(buf, blen, lp, q - lp);
+			if (bf.len > 0) buf_addc(&bf, '\n');
+			buf_add(&bf, lp, q - lp);
 		}
 		line = eol(line, e);
 	}
-	while (blen > 0 && isws(buf[blen-1]))
-		blen--;
-	ADDC(buf, blen) = '\0';
+	while (bf.len > 0 && isws(bf.s[bf.len-1]))
+		bf.len--;
+	buf_end(&bf);
 
 	{
 		char hid[256];
 		const char *pid = attr_find(pending_attrs, "id");
 		if (pid && pid[0]) {
 			snprintf(hid, sizeof(hid) - 12, "%s", pid);
-		} else if (blen > 0) {
-			make_slug(buf, blen, hid, sizeof(hid) - 12);
+		} else if (bf.len > 0) {
+			make_slug(bf.s, bf.len, hid, sizeof(hid) - 12);
 		} else {
 			snprintf(hid, sizeof(hid), "s-%d", nsections + 1);
 		}
@@ -1379,9 +1389,9 @@ doheading(const char *b, const char *e, int n)
 		oputc('>');
 		clear_pending();
 	}
-	process(buf, buf + blen, 0);
+	process(bf.s, bf.s + bf.len, 0);
 	oprintf("</h%d>\n", level);
-	free(buf);
+	free(bf.s);
 	return -(line - b);
 }
 
@@ -1389,8 +1399,8 @@ static int
 doblockquote(const char *b, const char *e, int n)
 {
 	const char *p, *q, *line;
-	char *buf;
-	int i, sp;
+	struct buf bf;
+	int sp;
 
 	if (!n) return 0;
 	p = b;
@@ -1401,8 +1411,7 @@ doblockquote(const char *b, const char *e, int n)
 	p++;
 	if (p < e && *p != ' ' && *p != '\n') return 0;
 
-	buf = NULL;
-	i = 0;
+	memset(&bf, 0, sizeof bf);
 	line = b;
 	{
 		int in_para = 0;
@@ -1416,32 +1425,32 @@ doblockquote(const char *b, const char *e, int n)
 				if (p < e && *p == ' ') p++;
 				q = eol(line, e);
 				int blank = isblankline(p, q);
-				PUSHRANGE(buf, i, p, q - p);
+				buf_add(&bf, p, q - p);
 				in_para = !blank;
 			} else if (isblankline(line, eol(line, e))) {
 				break;
 			} else if (in_para) {
 				/* lazy continuation */
 				q = eol(line, e);
-				PUSHRANGE(buf, i, line, q - line);
+				buf_add(&bf, line, q - line);
 			} else {
 				break;
 			}
 			line = eol(line, e);
 		}
 	}
-	ADDC(buf, i) = '\0';
+	buf_end(&bf);
 	{
 		int save = in_container;
 		in_container = 1;
 		oputs("<blockquote");
 		emit_pending();
 		oputs(">\n");
-		process(buf, buf + i, 1);
+		process(bf.s, bf.s + bf.len, 1);
 		oputs("</blockquote>\n");
 		in_container = save;
 	}
-	free(buf);
+	free(bf.s);
 	return -(line - b);
 }
 
@@ -1715,8 +1724,8 @@ dolist(const char *b, const char *e, int n)
 	static const char *typattr[] = { "", "", " type=\"a\"", " type=\"A\"",
 	    " type=\"i\"", " type=\"I\"" };
 	const char *p, *q, *line;
-	char *buf;
-	int i, sp, indent, loose, had_blank;
+	struct buf bf;
+	int sp, indent, loose, had_blank;
 	struct marker lm;	/* the marker this list is built from */
 
 	if (!n) return 0;
@@ -1873,17 +1882,16 @@ dolist(const char *b, const char *e, int n)
 		}
 		indent = item_sp + item_mw; /* content column */
 
-		buf = NULL;
-		i = 0;
+		memset(&bf, 0, sizeof bf);
 		p = line + indent;
 		q = eol(line, e);
-		PUSHRANGE(buf, i, p, q - p);
+		buf_add(&bf, p, q - p);
 		line = q;
 
 		while (line < e) {
 			if (isblankline(line, eol(line, e))) {
 				had_blank = 1;
-				PUSH(buf, i, '\n');
+				buf_addc(&bf, '\n');
 				line = eol(line, e);
 				continue;
 			}
@@ -1895,7 +1903,7 @@ dolist(const char *b, const char *e, int n)
 				else
 					strip = marker_col + 1;
 				q = eol(line, e);
-				PUSHRANGE(buf, i, line + strip, q - (line + strip));
+				buf_add(&bf, line + strip, q - (line + strip));
 				line = q;
 				continue;
 			}
@@ -1920,7 +1928,7 @@ dolist(const char *b, const char *e, int n)
 					int strip = sp;
 					if (strip > indent) strip = indent;
 					else if (strip > marker_col + 1) strip = marker_col + 1;
-					PUSHRANGE(buf, i, line + strip, q - (line + strip));
+					buf_add(&bf, line + strip, q - (line + strip));
 				}
 				line = q;
 				continue;
@@ -1930,21 +1938,21 @@ dolist(const char *b, const char *e, int n)
 			 * buffer; otherwise the marker-looking line is just
 			 * indented literal content of the parent item. */
 			{
-				const char *lb = buf + i;
+				const char *lb = bf.s + bf.len;
 				/* skip trailing blanks in buffer */
-				while (lb > buf && lb[-1] == '\n') lb--;
+				while (lb > bf.s && lb[-1] == '\n') lb--;
 				/* find start of last line */
 				{
 					const char *ls = lb;
-					while (ls > buf && ls[-1] != '\n') ls--;
-					int preceded_by_blank = (ls >= buf + 2
+					while (ls > bf.s && ls[-1] != '\n') ls--;
+					int preceded_by_blank = (ls >= bf.s + 2
 					    && ls[-1] == '\n' && ls[-2] == '\n');
 					struct marker it;
 					if (preceded_by_blank && scan_marker(
 					    ls + spaces(ls, lb), lb, &it)) {
 						/* last content is sub-list: lazy OK */
 						q = eol(line, e);
-						PUSHRANGE(buf, i, line, q - line);
+						buf_add(&bf, line, q - line);
 						line = q;
 						continue;
 					}
@@ -1955,16 +1963,17 @@ dolist(const char *b, const char *e, int n)
 
 		/* blank between items (not after sub-list) → loose */
 		{
-			int saw_blank = (i >= 2 && buf[i-1] == '\n' && buf[i-2] == '\n');
+			int saw_blank = (bf.len >= 2 && bf.s[bf.len-1] == '\n'
+			    && bf.s[bf.len-2] == '\n');
 			if (saw_blank) {
 				/* check line before trailing blank: if it's a sub-list marker,
 				 * the blank is within sub-content, not between items */
-				const char *lb = buf + i - 2;
-				while (lb > buf && lb[-1] != '\n') lb--;
+				const char *lb = bf.s + bf.len - 2;
+				while (lb > bf.s && lb[-1] != '\n') lb--;
 				{
 					struct marker it;
-					const char *np = lb + spaces(lb, buf + i);
-					if (scan_marker(np, buf + i, &it))
+					const char *np = lb + spaces(lb, bf.s + bf.len);
+					if (scan_marker(np, bf.s + bf.len, &it))
 						saw_blank = 0;
 				}
 			}
@@ -1981,8 +1990,8 @@ dolist(const char *b, const char *e, int n)
 			}
 		}
 
-		while (i > 0 && buf[i-1] == '\n') i--;
-		ADDC(buf, i) = '\0';
+		while (bf.len > 0 && bf.s[bf.len-1] == '\n') bf.len--;
+		buf_end(&bf);
 
 		{
 			int save_tight = tight;
@@ -1990,27 +1999,27 @@ dolist(const char *b, const char *e, int n)
 			in_container = 1;
 			oputs("<li>\n");
 			/* task list checkbox */
-			if (is_task && i >= 3 && buf[0] == '['
-			    && (buf[1] == ' ' || buf[1] == 'x')
-			    && buf[2] == ']') {
-				int checked = (buf[1] == 'x');
+			if (is_task && bf.len >= 3 && bf.s[0] == '['
+			    && (bf.s[1] == ' ' || bf.s[1] == 'x')
+			    && bf.s[2] == ']') {
+				int checked = (bf.s[1] == 'x');
 				oprintf("<input disabled=\"\" type=\"checkbox\"%s/>\n",
 				    checked ? " checked=\"\"" : "");
 				/* skip [ ] or [x] and trailing space */
 				{
 					int skip = 3;
-					if (skip < i && buf[skip] == ' ') skip++;
-					memmove(buf, buf + skip, i - skip + 1);
-					i -= skip;
+					if (skip < bf.len && bf.s[skip] == ' ') skip++;
+					memmove(bf.s, bf.s + skip, bf.len - skip + 1);
+					bf.len -= skip;
 				}
 			}
 			/* check if item has blank between text blocks → loose */
-			if (!loose && item_has_inner_blank(buf, i))
+			if (!loose && item_has_inner_blank(bf.s, bf.len))
 				loose = 1;
 			if (!loose) tight = 1;
 			/* find first blank line to split inline vs block content */
 			{
-				const char *bp = buf, *be = buf + i;
+				const char *bp = bf.s, *be = bf.s + bf.len;
 				const char *split = NULL;
 				const char *sp2;
 				for (sp2 = bp; sp2 < be; ) {
@@ -2030,15 +2039,14 @@ dolist(const char *b, const char *e, int n)
 					/* post-blank: block */
 					process(split, be, 1);
 				} else {
-					process(buf, buf + i, 1);
+					process(bf.s, bf.s + bf.len, 1);
 				}
 			}
 			tight = save_tight;
 			in_container = save_cont;
 		}
 		oputs("</li>\n");
-		free(buf);
-		buf = NULL;
+		free(bf.s);
 		had_blank = 0;
 	}
 	}
@@ -2071,9 +2079,7 @@ doparagraph(const char *b, const char *e, int n)
 	 * (emphasis/quotes). The transformed buffer is only used if changes
 	 * were made; otherwise the original range is processed directly. */
 	{
-		int ncap = (p - b) + 64;
-		char *nbuf = malloc(ncap);
-		int nlen = 0;
+		struct buf nb;
 		const char *s = b;
 		int transformed = 0;
 		/* Once a `{` scan has confirmed there is no `}` from some position
@@ -2082,21 +2088,18 @@ doparagraph(const char *b, const char *e, int n)
 		 * O(N^2). See fuzz/afl-out hangs. */
 		const char *no_close_after = p;
 
-		if (!nbuf) die("malloc");
+		memset(&nb, 0, sizeof nb);
 		while (s < p) {
 			if (*s == '\\' && s + 1 < p) {
-				GROWBUF(nbuf, nlen, ncap, 2);
-				nbuf[nlen++] = *s++;
-				nbuf[nlen++] = *s++;
+				buf_addc(&nb, *s++);
+				buf_addc(&nb, *s++);
 				continue;
 			}
 			if (*s == '`') {
 				/* code spans copy over verbatim */
 				const char *q = skip_code_span(s, p);
 				if (!q) q = p;
-				GROWBUF(nbuf, nlen, ncap, (int)(q - s));
-				memcpy(nbuf + nlen, s, q - s);
-				nlen += q - s;
+				buf_add(&nb, s, q - s);
 				s = q;
 				continue;
 			}
@@ -2174,46 +2177,40 @@ doparagraph(const char *b, const char *e, int n)
 									if (r < p && (*r == '*' || *r == '_'))
 										stop_at_emph = 1;
 								}
-								int wstart = nlen;
+								int wstart = nb.len;
 								while (wstart > 0
-								    && nbuf[wstart-1] != ' '
-								    && nbuf[wstart-1] != '\n'
-								    && nbuf[wstart-1] != '\t'
-								    && nbuf[wstart-1] != '>'
-								    && nbuf[wstart-1] != '"'
-								    && !(stop_at_emph && (nbuf[wstart-1] == '*'
-								        || nbuf[wstart-1] == '_')))
+								    && nb.s[wstart-1] != ' '
+								    && nb.s[wstart-1] != '\n'
+								    && nb.s[wstart-1] != '\t'
+								    && nb.s[wstart-1] != '>'
+								    && nb.s[wstart-1] != '"'
+								    && !(stop_at_emph && (nb.s[wstart-1] == '*'
+								        || nb.s[wstart-1] == '_')))
 									wstart--;
-								/* insert [ before word */
-								GROWBUF(nbuf, nlen, ncap, 2);
-								memmove(nbuf + wstart + 1, nbuf + wstart, nlen - wstart);
-								nbuf[wstart] = '[';
-								nlen++;
-								/* add ] before {attrs} */
-								GROWBUF(nbuf, nlen, ncap, 1);
-								nbuf[nlen++] = ']';
+								/* wrap the word in [ ] so dolink's span
+								 * syntax picks the attributes up */
+								buf_addc(&nb, 0);
+								buf_addc(&nb, 0);
+								memmove(nb.s + wstart + 1, nb.s + wstart,
+								    nb.len - 2 - wstart);
+								nb.s[wstart] = '[';
+								nb.s[nb.len - 1] = ']';
 								/* copy {attrs}, escaping unescaped * and _ in quoted values */
 								while (s <= q) {
 									if (*s == '"' && s > b && s < q) {
-										GROWBUF(nbuf, nlen, ncap, 1);
-										nbuf[nlen++] = *s++;
+										buf_addc(&nb, *s++);
 										while (s < q && *s != '"') {
 											if (*s == '\\' && s + 1 < q) {
-												GROWBUF(nbuf, nlen, ncap, 2);
-												nbuf[nlen++] = *s++;
-												nbuf[nlen++] = *s++;
+												buf_addc(&nb, *s++);
+												buf_addc(&nb, *s++);
 												continue;
 											}
-											if (*s == '*' || *s == '_') {
-												GROWBUF(nbuf, nlen, ncap, 2);
-												nbuf[nlen++] = '\\';
-											}
-											GROWBUF(nbuf, nlen, ncap, 1);
-											nbuf[nlen++] = *s++;
+											if (*s == '*' || *s == '_')
+												buf_addc(&nb, '\\');
+											buf_addc(&nb, *s++);
 										}
 									}
-									GROWBUF(nbuf, nlen, ncap, 1);
-									nbuf[nlen++] = *s++;
+									buf_addc(&nb, *s++);
 								}
 							} else {
 								/* attrs preceded by space/start — consume silently */
@@ -2224,10 +2221,8 @@ doparagraph(const char *b, const char *e, int n)
 						}
 						/* not valid attrs — copy {..} literally to prevent
 						 * smart replacement of contents (e.g. -- in {1--}) */
-						while (s <= q) {
-							GROWBUF(nbuf, nlen, ncap, 1);
-							nbuf[nlen++] = *s++;
-						}
+						buf_add(&nb, s, q + 1 - s);
+						s = q + 1;
 						transformed = 1;
 						continue;
 					}
@@ -2236,8 +2231,7 @@ doparagraph(const char *b, const char *e, int n)
 				}
 			}
 		copy_char:
-			GROWBUF(nbuf, nlen, ncap, 1);
-			nbuf[nlen++] = *s++;
+			buf_addc(&nb, *s++);
 		}
 
 		if (!tight) {
@@ -2257,11 +2251,11 @@ doparagraph(const char *b, const char *e, int n)
 			oputc('>');
 		}
 		if (transformed) {
-			process(nbuf, nbuf + nlen, 0);
+			process(nb.s, nb.s + nb.len, 0);
 		} else {
 			process(b, p, 0);
 		}
-		free(nbuf);
+		free(nb.s);
 	}
 	if (!tight) oputs("</p>");
 	oputc('\n');
@@ -3271,19 +3265,14 @@ process(const char *b, const char *e, int newblock)
 	sc = save;
 }
 
-static char *urlbuf;
-static int urlbuflen, cap_url;
+static struct buf urlbuf;
 
 static void
 urlbuf_add(const char *b, const char *e)
 {
-	while (b < e) {
-		if (*b != '\n' && *b != '\r' && *b != ' ' && *b != '\t') {
-			GROWBUF(urlbuf, urlbuflen, cap_url, 1);
-			urlbuf[urlbuflen++] = *b;
-		}
-		b++;
-	}
+	for (; b < e; b++)
+		if (*b != '\n' && *b != '\r' && *b != ' ' && *b != '\t')
+			buf_addc(&urlbuf, *b);
 }
 
 /* pre-scan: collect reference defs, footnote defs, and heading auto-refs */
@@ -3313,33 +3302,32 @@ prescan(const char *b, const char *e)
 				fp += 2;
 				while (fp < e && (*fp == ' ' || *fp == '\t')) fp++;
 				/* collect first line content */
-				char *fnbuf = NULL;
-				int fni = 0;
+				struct buf fn;
+				memset(&fn, 0, sizeof fn);
 				{
 					const char *cend = trim_end(fp, eol(line, e));
-					PUSHRANGE(fnbuf, fni, fp, cend - fp);
+					buf_add(&fn, fp, cend - fp);
 				}
 				line = eol(line, e);
 				/* collect continuation lines (blank or indented by 2+) */
 				while (line < e) {
 					if (isblankline(line, eol(line, e))) {
-						PUSH(fnbuf, fni, '\n');
+						buf_addc(&fn, '\n');
 						line = eol(line, e);
 						continue;
 					}
 					int csp = spaces(line, e);
 					if (csp < 2) break;
-					if (fni > 0)
-						PUSH(fnbuf, fni, '\n');
+					if (fn.len > 0)
+						buf_addc(&fn, '\n');
 					const char *le = eol(line, e);
 					const char *lp = line + 2;
 					const char *lend = trim_end(lp, le);
-					PUSHRANGE(fnbuf, fni, lp, lend - lp);
+					buf_add(&fn, lp, lend - lp);
 					line = eol(line, e);
 				}
-				while (fni > 0 && fnbuf[fni-1] == '\n') fni--;
-				ADDC(fnbuf, fni) = '\0';
-				fnbuf = realloc(fnbuf, fni + 1);
+				while (fn.len > 0 && fn.s[fn.len-1] == '\n') fn.len--;
+				buf_end(&fn);
 				if (ll > 0) {
 					char *lcpy = malloc(ll);
 					if (!lcpy) die("malloc");
@@ -3347,13 +3335,13 @@ prescan(const char *b, const char *e)
 					GROWA(footnotes, nfootnotes, cap_fn);
 					footnotes[nfootnotes].label = lcpy;
 					footnotes[nfootnotes].labellen = ll;
-					footnotes[nfootnotes].content = fnbuf;
-					footnotes[nfootnotes].contentlen = fni;
+					footnotes[nfootnotes].content = fn.s;
+					footnotes[nfootnotes].contentlen = fn.len;
 					footnotes[nfootnotes].used = 0;
 					footnotes[nfootnotes].num = 0;
 					nfootnotes++;
 				} else {
-					free(fnbuf);
+					free(fn.s);
 				}
 				continue;
 			}
@@ -3370,7 +3358,7 @@ prescan(const char *b, const char *e)
 				if (p < e && *p == ':') {
 					p++;
 					while (p < e && (*p == ' ' || *p == '\t')) p++;
-					urlbuflen = 0;
+					urlbuf.len = 0;
 					if (p < e && *p != '\n') {
 						const char *us = p;
 						const char *ue = us;
@@ -3405,11 +3393,11 @@ prescan(const char *b, const char *e)
 					}
 					if (labellen > 0) {
 						GROWA(refs, nrefs, cap_refs);
-						char *u = malloc(urlbuflen + 1);
+						char *u = malloc(urlbuf.len + 1);
 						if (u) {
-							if (urlbuflen > 0)
-								memcpy(u, urlbuf, urlbuflen);
-							u[urlbuflen] = '\0';
+							if (urlbuf.len > 0)
+								memcpy(u, urlbuf.s, urlbuf.len);
+							u[urlbuf.len] = '\0';
 						}
 						char *nbuf = malloc(labellen);
 						if (!nbuf) die("malloc");
@@ -3417,7 +3405,7 @@ prescan(const char *b, const char *e)
 						    normalize_label(label, labellen, nbuf, 1);
 						refs[nrefs].norm = nbuf;
 						refs[nrefs].url = u;
-						refs[nrefs].urllen = urlbuflen;
+						refs[nrefs].urllen = urlbuf.len;
 						refs[nrefs].attrs = NULL;
 						prev_line_attrs(line, b, &refs[nrefs].attrs);
 						if (!refs[nrefs].attrs) {
@@ -3621,7 +3609,7 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	in_container = 0;
 	tight = 0;
 	id_ht = NULL; id_ht_sz = 0; id_ht_cnt = 0;
-	urlbuf = NULL; urlbuflen = 0; cap_url = 0;
+	memset(&urlbuf, 0, sizeof urlbuf);
 	memset(&sc, 0, sizeof sc);	/* process() re-zeroes it per call */
 	bm_stack = NULL;
 	bm_stack_cap = 0;
@@ -3655,12 +3643,11 @@ cdjot_convert(FILE *out, const char *buf, size_t len)
 	for (i = 0; i < id_ht_sz; i++)
 		free(id_ht[i].key);
 	free(id_ht);
-	free(urlbuf);
+	free(urlbuf.s);
 	free(pending_attrs);
 	free(bm_stack);
 
 	refs = NULL; footnotes = NULL; id_ht = NULL;
-	urlbuf = NULL;
 	pending_attrs = NULL;
 	bm_stack = NULL; bm_stack_cap = 0;
 
